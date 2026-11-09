@@ -20,6 +20,9 @@ public:
     // TrackedDeviceAdded() so SteamVR picks it up on activation.
     void EnsureDefaultRole() const;
 
+    // Prop_RegisteredDeviceType value; also the key of the role setting.
+    std::string RegisteredDeviceType() const;
+
 protected:
     void SetupProperties(vr::PropertyContainerHandle_t container) override;
 

@@ -38,9 +38,19 @@ TrackerDevice::TrackerDevice(uint32_t trackerIndex)
     : DeviceBase(ipc::TrackerSlot(trackerIndex), TrackerSerial(trackerIndex), vr::TrackedDeviceClass_GenericTracker),
       trackerIndex_(trackerIndex) {}
 
+std::string TrackerDevice::RegisteredDeviceType() const {
+    // Same shape as a real tracker ("htc/vive_trackerLHR-XXXXXXXX").
+    return "htc/vive_tracker" + Serial();
+}
+
 void TrackerDevice::EnsureDefaultRole() const {
-    // Key format used by SteamVR: "/devices/<driver name>/<serial>"
-    const std::string key = std::string("/devices/") + kDriverName + "/" + Serial();
+    // SteamVR keys tracker roles by device path "/devices/<Prop_RegisteredDeviceType>",
+    // e.g. "/devices/htc/vive_trackerTUBANE-TRK-00" (see "autobinding role" in vrserver.txt).
+    const std::string key = "/devices/" + RegisteredDeviceType();
+
+    // Remove the key written by early builds ("/devices/tubane/<serial>"), which SteamVR ignores.
+    const std::string legacyKey = std::string("/devices/") + kDriverName + "/" + Serial();
+    vr::VRSettings()->RemoveKeyInSection("trackers", legacyKey.c_str());
 
     char                 current[128] = {};
     vr::EVRSettingsError err          = vr::VRSettingsError_None;
@@ -57,7 +67,7 @@ void TrackerDevice::EnsureDefaultRole() const {
 void TrackerDevice::SetupProperties(vr::PropertyContainerHandle_t container) {
     auto* props = vr::VRProperties();
 
-    const std::string registered = "htc/vive_tracker" + Serial();
+    const std::string registered = RegisteredDeviceType();
     SetCommonProperties(container, "HTC", "VIVE Tracker Pro MV", registered.c_str());
 
     props->SetInt32Property(container, vr::Prop_ControllerRoleHint_Int32, vr::TrackedControllerRole_OptOut);

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <chrono>
+#include <cstring>
 
 #include "driver_log.h"
 #include "tubane/default_state.h"
@@ -122,6 +123,19 @@ void ServerProvider::RunFrame() {
         return;
     }
 
+    // vrserver activates devices after Init() returns, so object ids become
+    // known only later. Re-publish the status whenever one changes.
+    bool idsChanged = false;
+    for (const DeviceBase* device : devices_) {
+        if (publishedIds_[device->Slot()] != device->ObjectId()) {
+            idsChanged = true;
+            break;
+        }
+    }
+    if (idsChanged) {
+        PublishDriverStatus();
+    }
+
     ipc::ControlBlock control{};
     if (!ipc::ReadControl(*shm_.State(), control)) {
         return;
@@ -175,6 +189,7 @@ void ServerProvider::PublishDriverStatus() {
         for (const DeviceBase* device : devices_) {
             d.deviceIds[device->Slot()] = device->ObjectId();
         }
+        std::memcpy(publishedIds_, d.deviceIds, sizeof(publishedIds_));
     });
 }
 

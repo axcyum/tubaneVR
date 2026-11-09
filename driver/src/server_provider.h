@@ -50,6 +50,7 @@ private:
     ipc::SharedMemory shm_;
     uint32_t          lastConfigRevision_ = 0;
     bool              restartRequired_    = false;
+    uint32_t          publishedIds_[ipc::kMaxDevices] = {};  // deviceIds last written to DriverBlock
 
     std::atomic<bool> running_{false};
     std::thread       poseThread_;
