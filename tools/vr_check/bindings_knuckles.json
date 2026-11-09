@@ -1,0 +1,23 @@
+{
+  "controller_type": "knuckles",
+  "description": "tubane_vr_check default bindings",
+  "name": "tubane_vr_check",
+  "bindings": {
+    "/actions/check": {
+      "sources": [
+        { "path": "/user/hand/left/input/a",  "mode": "button", "inputs": { "click": { "output": "/actions/check/in/a" } } },
+        { "path": "/user/hand/right/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/check/in/a" } } },
+        { "path": "/user/hand/left/input/b",  "mode": "button", "inputs": { "click": { "output": "/actions/check/in/b" } } },
+        { "path": "/user/hand/right/input/b", "mode": "button", "inputs": { "click": { "output": "/actions/check/in/b" } } },
+        { "path": "/user/hand/left/input/trigger",  "mode": "trigger", "inputs": { "pull": { "output": "/actions/check/in/trigger" }, "click": { "output": "/actions/check/in/trigger_click" } } },
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": { "pull": { "output": "/actions/check/in/trigger" }, "click": { "output": "/actions/check/in/trigger_click" } } },
+        { "path": "/user/hand/left/input/grip",  "mode": "trigger", "inputs": { "pull": { "output": "/actions/check/in/grip" } } },
+        { "path": "/user/hand/right/input/grip", "mode": "trigger", "inputs": { "pull": { "output": "/actions/check/in/grip" } } },
+        { "path": "/user/hand/left/input/thumbstick",  "mode": "joystick", "inputs": { "position": { "output": "/actions/check/in/thumbstick" }, "click": { "output": "/actions/check/in/thumbstick_click" } } },
+        { "path": "/user/hand/right/input/thumbstick", "mode": "joystick", "inputs": { "position": { "output": "/actions/check/in/thumbstick" }, "click": { "output": "/actions/check/in/thumbstick_click" } } },
+        { "path": "/user/hand/left/input/trackpad",  "mode": "trackpad", "inputs": { "position": { "output": "/actions/check/in/trackpad" }, "touch": { "output": "/actions/check/in/trackpad_touch" } } },
+        { "path": "/user/hand/right/input/trackpad", "mode": "trackpad", "inputs": { "position": { "output": "/actions/check/in/trackpad" }, "touch": { "output": "/actions/check/in/trackpad_touch" } } }
+      ]
+    }
+  }
+}

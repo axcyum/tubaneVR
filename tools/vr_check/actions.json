@@ -1,0 +1,34 @@
+{
+  "default_bindings": [
+    { "controller_type": "knuckles", "binding_url": "bindings_knuckles.json" }
+  ],
+  "actions": [
+    { "name": "/actions/check/in/a",               "type": "boolean" },
+    { "name": "/actions/check/in/b",               "type": "boolean" },
+    { "name": "/actions/check/in/trigger",         "type": "vector1" },
+    { "name": "/actions/check/in/trigger_click",   "type": "boolean" },
+    { "name": "/actions/check/in/grip",            "type": "vector1" },
+    { "name": "/actions/check/in/thumbstick",      "type": "vector2" },
+    { "name": "/actions/check/in/thumbstick_click","type": "boolean" },
+    { "name": "/actions/check/in/trackpad",        "type": "vector2" },
+    { "name": "/actions/check/in/trackpad_touch",  "type": "boolean" }
+  ],
+  "action_sets": [
+    { "name": "/actions/check", "usage": "leftright" }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/check": "tubane check",
+      "/actions/check/in/a": "A",
+      "/actions/check/in/b": "B",
+      "/actions/check/in/trigger": "Trigger",
+      "/actions/check/in/trigger_click": "Trigger click",
+      "/actions/check/in/grip": "Grip",
+      "/actions/check/in/thumbstick": "Thumbstick",
+      "/actions/check/in/thumbstick_click": "Thumbstick click",
+      "/actions/check/in/trackpad": "Trackpad",
+      "/actions/check/in/trackpad_touch": "Trackpad touch"
+    }
+  ]
+}

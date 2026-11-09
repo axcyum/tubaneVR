@@ -12,6 +12,7 @@
 #include "camera.h"
 #include "scene_file.h"
 #include "spout_receiver.h"
+#include "velocity.h"
 #include "d3d11_context.h"
 #include "hmd_viewer.h"
 #include "input_devices.h"
@@ -132,6 +133,10 @@ private:
     AnimSampleOptions     animOptions_;
     bool                  animEnabled_[ipc::kMaxDevices] = {};
     bool                  animDriven_[ipc::kMaxDevices] = {};  // written by the clip in the last sample
+
+    // Velocities sent with the poses (SteamVR pose prediction)
+    VelocityEstimator     velocity_;
+    bool                  sendVelocity_ = true;
 
     // Spout2 receiver
     SpoutReceiver         spout_;

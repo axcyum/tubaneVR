@@ -368,8 +368,31 @@ SteamVR が仮想 HMD に描画した映像を、GPU 上の共有テクスチャ
 
 - 姿勢と入力の書き込みは **サンドボックス 1 つだけ** が行う設計です。サンドボックスを 2 つ起動したり、
   サンドボックスの起動中に `tubane_shm_probe` の書き込み系コマンドを使ったりしないでください（起動時に他のインスタンスを検出すると警告を表示します）
-- 速度・角速度は現在 0 を送っています（SteamVR の姿勢予測は無効の状態）。ギズモでの操作には 500Hz で追従します
+- デバイスを動かすと、その動きから速度・角速度を計算して送ります（SteamVR の姿勢予測や、ゲーム内で物を投げる動作に使われます）。
+  Driver / Settings パネルの `Send velocities` で OFF にできます
+- SteamVR のダッシュボードが開いている間は、ゲームにコントローラー入力が届きません（左手のシステムボタン / キャプチャ中の `Tab` で開閉）
 - 骨格入力（Skeletal Input）は未実装です。指カールの値は `/input/finger/*` に送られます
+
+---
+
+## tubane_vr_check（SteamVR を通した動作確認）
+
+SteamVR にアプリとして接続し、tubane の入力と姿勢が SteamVR の中で正しく届いているかを自動で確認します。
+
+```powershell
+build\vs2026\tools\vr_check\Release\tubane_vr_check.exe          # すべて
+build\vs2026\tools\vr_check\Release\tubane_vr_check.exe input    # コントローラー入力
+build\vs2026\tools\vr_check\Release\tubane_vr_check.exe motion   # 速度・角速度
+```
+
+| チェック | 内容 |
+|---|---|
+| `input` | 左右のコントローラーに A / B / トリガー / グリップ / スティック / トラックパッドの入力を書き込み、SteamVR の入力 API（IVRInput）で同じ値が読めるか |
+| `velocity` | SteamVR が速度・角速度をどの座標系で解釈するか（線速度 = ワールド、角速度 = デバイスのローカル） |
+| `motion` | サンドボックスと同じ速度推定で HMD を動かし、SteamVR がワールド座標で正しい速度・角速度を返すか |
+
+- 実行中はツールが共有メモリへの書き込み手になるため、**tubane-sandbox を閉じてから** 実行してください。終了時に元の状態へ戻します
+- `input` は実行中だけ SteamVR のシーンアプリになります。**ダッシュボードが開いていると失敗する** ので、閉じてから実行してください（`vrcmd --hidedashboard`）
 
 ---
 
@@ -518,7 +541,8 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
   - [ ] ゲームパッド / キーボードの割り当て変更 UI
   - [ ] FBX / BVH などのモーションデータ、Unity の Humanoid マッスルカーブからの頭の姿勢の算出
   - [ ] 骨格入力（Skeletal Input）
-  - [ ] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
+  - [x] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
+  - [x] SteamVR を通した入力・速度の自動検証（`tubane_vr_check`）
   - [ ] ハプティクスの表示
   - [ ] オーバーレイレイヤーの合成表示
   - [ ] マルチサンプルのスワップテクスチャへの対応

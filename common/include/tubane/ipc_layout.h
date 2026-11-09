@@ -64,7 +64,8 @@ struct DevicePose {
     double   position[3];         // meters
     double   rotation[4];         // unit quaternion (w, x, y, z)
     double   velocity[3];         // m/s, world space
-    double   angularVelocity[3];  // rad/s, world space
+    double   angularVelocity[3];  // rad/s (axis * angle), DEVICE-LOCAL space - this is how
+                                  // SteamVR interprets DriverPose_t (verified by tubane_vr_check)
     uint32_t flags;               // PoseFlags
     uint32_t reserved;
 };

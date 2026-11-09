@@ -19,6 +19,15 @@ add_library(openvr_headers INTERFACE)
 add_library(tubane::openvr_headers ALIAS openvr_headers)
 target_include_directories(openvr_headers SYSTEM INTERFACE "${openvr_SOURCE_DIR}/headers")
 
+# Client API (openvr_api.dll) - only for tools that connect to SteamVR as an
+# application (tubane_vr_check). The driver never links this.
+add_library(openvr_api SHARED IMPORTED GLOBAL)
+add_library(tubane::openvr_api ALIAS openvr_api)
+set_target_properties(openvr_api PROPERTIES
+    IMPORTED_IMPLIB   "${openvr_SOURCE_DIR}/lib/win64/openvr_api.lib"
+    IMPORTED_LOCATION "${openvr_SOURCE_DIR}/bin/win64/openvr_api.dll")
+target_link_libraries(openvr_api INTERFACE openvr_headers)
+
 if(TUBANE_BUILD_SANDBOX)
     # --- Dear ImGui (docking branch) ------------------------------------------
     # Neither ImGui nor ImGuizmo ship a usable CMake project; we compile their

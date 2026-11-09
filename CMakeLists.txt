@@ -38,4 +38,5 @@ endif()
 
 if(TUBANE_BUILD_TOOLS)
     add_subdirectory(tools/shm_probe)
+    add_subdirectory(tools/vr_check)
 endif()

@@ -82,7 +82,7 @@ SharedState
 | `position[3]` | double | メートル。OpenVR Standing 空間（+X 右、+Y 上、-Z 前方） |
 | `rotation[4]` | double | 単位クォータニオン **(w, x, y, z)** |
 | `velocity[3]` | double | m/s（ワールド座標） |
-| `angularVelocity[3]` | double | rad/s（ワールド座標） |
+| `angularVelocity[3]` | double | rad/s、軸 × 角度。**デバイスのローカル座標**（SteamVR の解釈を `tubane_vr_check velocity` で実測） |
 | `flags` | uint32 | `kPoseValid`(1) = 姿勢が有効 / `kPoseConnected`(2) = 接続中として報告 |
 
 - `kPoseValid` が無い場合、driver は `TrackingResult_Running_OutOfRange` / `poseIsValid=false` で報告します

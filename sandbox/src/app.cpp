@@ -206,6 +206,8 @@ void App::Frame(float dt, double now) {
     ComposeInput(1, spaceTriggerHand_ == 1, gamepadInput, keyboardInput);
     if (showDemo_) ImGui::ShowDemoWindow(&showDemo_);
 
+    // Velocities from this frame's pose changes (world linear, local angular).
+    velocity_.Apply(ipc_.Control().poses, now_, sendVelocity_);
     ipc_.Publish();
 }
 
@@ -919,6 +921,10 @@ void App::DrawDriverPanel() {
             ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Saved. Restart SteamVR to apply resolution / tracker count.");
         }
     }
+
+    ImGui::Checkbox("Send velocities (pose prediction)", &sendVelocity_);
+    HelpMarker("Linear and angular velocity computed from how devices move each frame. SteamVR uses them to "
+               "predict poses and games use them e.g. for throwing. Off = devices report zero velocity.");
 
     ImGui::SeparatorText("GPU");
     ImGui::TextWrapped("Sandbox adapter: %ls", d3d_->AdapterName());
