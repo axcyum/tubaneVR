@@ -287,6 +287,31 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 
 メニューの **Scene → Reset all poses** で全デバイスを初期配置に戻せます。
 
+### File メニュー
+
+| 項目 | 内容 |
+|---|---|
+| **Open / Save scene** | 全デバイスの位置・回転・接続状態、トラッカー数・解像度・表示する目、部屋のサイズを `*.tubane.json` に保存 / 読み込み（`Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S`） |
+| **T-pose** | 全デバイスを T ポーズに配置。向きを `N`（-Z）/ `E`（+X）/ `S`（+Z）/ `W`（-X）から選び、身長で全体を拡大縮小 |
+| **Load Unity animation** | Unity の `.anim` を読み込み、Animation Player で再生してデバイスを動かす |
+| **Spout2 receiver** | Spout2 の送信元を選んで映像を表示するウィンドウ（等倍表示・別ウィンドウ化に対応） |
+
+**Unity アニメーションの対応形式**
+
+- テキスト形式（YAML）の `.anim` のみ。Unity の Project Settings → Editor → Asset Serialization を `Force Text` にして保存してください
+- **Humanoid クリップ:** 手足と体の IK ゴールを割り当てます（`LeftHandT/Q` → 左コントローラー、`RootT/Q` → 腰トラッカー、`LeftFootT/Q` → 左足トラッカーなど）。
+  Humanoid には頭のゴールが無いため、HMD は体の位置から推定します（高さは Animation Player で調整）
+- **Generic クリップ:** `Head` / `LeftHand` / `RightHand` / `Hips` / `LeftFoot` / `RightFoot` などの名前のオブジェクトを、対応するデバイスに割り当てます。
+  VR の録画データのように、オブジェクトが階層の最上位にあるクリップ向けです
+- Animation Player では、再生・一時停止・ループ・速度・時間のスクラブ、向き（NESW）・スケール・オフセット、デバイスごとの適用 ON/OFF を設定できます
+- 再生中は、アニメーションで動かしているデバイスをギズモで動かせません。チェックを外したデバイスは手動の姿勢のままです
+- キー間は線形補間です（Unity の接線は使いません）。キーが密なクリップほど正確に再現されます
+
+**Spout2**
+
+- 送信元が使う GPU とサンドボックスの GPU が同じである必要があります
+- 一覧で「Active sender」を選ぶと、Spout の「アクティブな送信元」に自動で追従します
+
 ### ゲームパッド / キーボードでコントローラーを操作
 
 コントローラーのボタン・スティック・トリガーは、パネル操作に加えてゲームパッドやキーボード＋マウスでも動かせます。
@@ -488,8 +513,10 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
   - [x] GPU アダプタ LUID の照合（`Prop_GraphicsAdapterLuid_Uint64` でコンポジタの GPU を指定）
   - [x] DriverBlock への書き込みを複数スレッド間で直列化（SeqLock の単一ライター条件を保証）
 - [x] **入力デバイス** — ゲームパッド（XInput / DirectInput）とキーボード＋マウスでコントローラーのボタン・スティックを操作（姿勢は手動のまま）
+- [x] **File メニュー** — シーンのセーブ / ロード、T ポーズ（NESW）、Unity `.anim` の再生、Spout2 受信
 - [ ] **今後の課題**
   - [ ] ゲームパッド / キーボードの割り当て変更 UI
+  - [ ] FBX / BVH などのモーションデータ、Unity の Humanoid マッスルカーブからの頭の姿勢の算出
   - [ ] 骨格入力（Skeletal Input）
   - [ ] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
   - [ ] ハプティクスの表示

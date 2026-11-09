@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <utility>
 
+#include "file_dialog.h"
 #include "tubane/default_state.h"
 
 namespace tubane::sandbox {
@@ -143,8 +144,20 @@ void App::Shutdown() {
 // Frame
 // ---------------------------------------------------------------------------
 void App::Frame(float dt, double now) {
+    now_ = now;
     ipc_.PollDriver(now);
     SyncConfigFromDriver();
+    UpdateAnimation(dt);
+    if (showSpoutWindow_) spout_.Update(d3d_->Device(), d3d_->Context(), spoutSender_, now);
+
+    // File shortcuts (not while typing or while keys drive the controllers).
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && !io.WantTextInput && !keyboardMouse_.Capturing()) {
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false)) SaveSceneDialog(io.KeyShift);
+            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) OpenSceneDialog();
+        }
+    }
     viewer_.Update(d3d_->Device(), d3d_->Context(), ipc_.Driver(), ipc_.DriverAlive(), now);
 
     // Physical inputs. F1 toggles keyboard/mouse capture; Esc or focus loss
@@ -181,6 +194,8 @@ void App::Frame(float dt, double now) {
     spaceTriggerHand_ = -1;
     DrawViewport(dt);  // last: sees this frame's edits, renders the scene
     DrawHelpWindow();
+    DrawAnimationWindow();
+    DrawSpoutWindow();
 
     // Controller composition after all panels so UI holds, Space, gamepad and
     // keyboard/mouse combine (runs even if the Viewport window is hidden).
@@ -221,6 +236,8 @@ void App::BuildDefaultLayout(ImGuiID dockspace) {
 void App::DrawMenuBar() {
     if (!ImGui::BeginMainMenuBar()) return;
 
+    DrawFileMenu();
+
     if (ImGui::BeginMenu("Scene")) {
         if (ImGui::MenuItem("Reset all poses")) {
             for (uint32_t i = 0; i < ipc::kMaxDevices; ++i) ipc_.Control().poses[i] = ipc::DefaultPose(i);
@@ -253,6 +270,14 @@ void App::DrawMenuBar() {
         ImGui::EndMenu();
     }
 
+    if (now_ < notifyUntil_) {
+        ImGui::SameLine(0.0f, 30.0f);
+        ImGui::TextColored(notifyError_ ? ImVec4(1, 0.45f, 0.4f, 1) : ImVec4(0.5f, 0.85f, 1, 1), "%s", notifyText_.c_str());
+    }
+    if (animPlaying_) {
+        ImGui::SameLine(0.0f, 30.0f);
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.5f, 1), "[Anim %.1fs]", animTime_);
+    }
     if (keyboardMouse_.Capturing()) {
         ImGui::SameLine(0.0f, 30.0f);
         ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "[KB/Mouse captured - Esc]");
@@ -380,7 +405,9 @@ void App::DrawViewport(float dt) {
 
     // No gizmo while keyboard/mouse is captured: clicks there drive the
     // controller triggers and must never move a pose.
-    if (!capturing && selected_ >= 0 && SlotVisible(static_cast<uint32_t>(selected_))) {
+    // Devices driven by a playing animation cannot be dragged either.
+    const bool animLocked = selected_ >= 0 && animPlaying_ && animDriven_[selected_];
+    if (!capturing && !animLocked && selected_ >= 0 && SlotVisible(static_cast<uint32_t>(selected_))) {
         ipc::DevicePose& pose = ipc_.Control().poses[selected_];
         XMFLOAT4X4 viewF, projF, model;
         XMStoreFloat4x4(&viewF, view);
@@ -1099,6 +1126,329 @@ void App::DrawInputDevices() {
         }
         ImGui::TextDisabled("Poses (6DoF) are never moved by these inputs.");
     }
+}
+
+// ---------------------------------------------------------------------------
+// File menu
+// ---------------------------------------------------------------------------
+void App::Notify(const std::string& message, bool error) {
+    notifyText_  = message;
+    notifyError_ = error;
+    notifyUntil_ = now_ + 4.0;
+}
+
+void App::DrawFileMenu() {
+    if (!ImGui::BeginMenu("File")) return;
+
+    if (ImGui::MenuItem("Open scene...", "Ctrl+O")) OpenSceneDialog();
+    if (ImGui::MenuItem("Save scene", "Ctrl+S")) SaveSceneDialog(false);
+    if (ImGui::MenuItem("Save scene as...", "Ctrl+Shift+S")) SaveSceneDialog(true);
+    if (!scenePath_.empty()) ImGui::TextDisabled("  %s", scenePath_.filename().string().c_str());
+    ImGui::Separator();
+
+    if (ImGui::BeginMenu("T-pose")) {
+        ImGui::SetNextItemWidth(140.0f);
+        ImGui::DragFloat("Body height", &bodyHeight_, 0.01f, 1.0f, 2.2f, "%.2f m");
+        ImGui::Separator();
+        const Facing facings[] = {Facing::North, Facing::East, Facing::South, Facing::West};
+        for (Facing f : facings) {
+            char label[48];
+            std::snprintf(label, sizeof(label), "Face %s", FacingLabel(f));
+            if (ImGui::MenuItem(label)) ApplyTPose(f);
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Load Unity animation (.anim)...")) OpenAnimationDialog();
+    ImGui::MenuItem("Animation player", nullptr, &showAnimWindow_);
+    ImGui::Separator();
+    ImGui::MenuItem("Spout2 receiver", nullptr, &showSpoutWindow_);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Exit")) DestroyWindow(hwnd_);
+    ImGui::EndMenu();
+}
+
+void App::SaveSceneTo(const std::filesystem::path& path) {
+    SceneData scene;
+    std::copy(std::begin(ipc_.Control().poses), std::end(ipc_.Control().poses), std::begin(scene.poses));
+    const ipc::ControlConfig& cfg = ipc_.Control().config;
+    scene.trackerCount = cfg.trackerCount;
+    scene.resolution   = cfg.resolution;
+    scene.viewerEye    = cfg.viewerEye;
+    scene.roomWidth    = roomWidth_;
+    scene.roomDepth    = roomDepth_;
+    scene.roomHeight   = roomHeight_;
+
+    std::string error;
+    if (SaveScene(path, scene, error)) {
+        scenePath_ = path;
+        Notify("Saved " + path.filename().string());
+    } else {
+        Notify("Save failed: " + error, true);
+    }
+}
+
+void App::LoadSceneFrom(const std::filesystem::path& path) {
+    SceneData scene;
+    std::copy(std::begin(ipc_.Control().poses), std::end(ipc_.Control().poses), std::begin(scene.poses));
+    std::string error;
+    if (!LoadScene(path, scene, error)) {
+        Notify("Load failed: " + error, true);
+        return;
+    }
+    animPlaying_ = false;  // a playing clip would immediately overwrite the loaded poses
+    std::copy(std::begin(scene.poses), std::end(scene.poses), std::begin(ipc_.Control().poses));
+    roomWidth_  = scene.roomWidth;
+    roomDepth_  = scene.roomDepth;
+    roomHeight_ = scene.roomHeight;
+
+    ipc::ControlConfig& cfg = ipc_.Control().config;
+    if (cfg.trackerCount != scene.trackerCount || cfg.resolution != scene.resolution || cfg.viewerEye != scene.viewerEye) {
+        cfg.trackerCount = scene.trackerCount;
+        cfg.resolution   = scene.resolution;
+        cfg.viewerEye    = scene.viewerEye;
+        BumpConfigRevision();  // driver saves them; restart needed for count / resolution
+    }
+    scenePath_ = path;
+    Notify("Loaded " + path.filename().string());
+}
+
+void App::SaveSceneDialog(bool saveAs) {
+    if (!saveAs && !scenePath_.empty()) {
+        SaveSceneTo(scenePath_);
+        return;
+    }
+    const auto path = SaveFileDialog(hwnd_, L"tubane scene (*.tubane.json)\0*.tubane.json\0JSON (*.json)\0*.json\0", L"json",
+                                     L"Save scene", scenePath_.empty() ? std::filesystem::path(L"scene.tubane.json") : scenePath_);
+    if (path) SaveSceneTo(*path);
+}
+
+void App::OpenSceneDialog() {
+    const auto path = OpenFileDialog(hwnd_, L"tubane scene (*.tubane.json)\0*.tubane.json\0JSON (*.json)\0*.json\0All files\0*.*\0",
+                                     L"Open scene");
+    if (path) LoadSceneFrom(*path);
+}
+
+void App::ApplyTPose(Facing facing) {
+    animPlaying_ = false;
+    BuildTPose(facing, bodyHeight_, ipc_.Control().poses);
+    char msg[64];
+    std::snprintf(msg, sizeof(msg), "T-pose facing %s", FacingLabel(facing));
+    Notify(msg);
+}
+
+// ---------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------
+void App::OpenAnimationDialog() {
+    const auto path = OpenFileDialog(hwnd_, L"Unity AnimationClip (*.anim)\0*.anim\0All files\0*.*\0", L"Load Unity animation");
+    if (!path) return;
+    AnimClip    clip;
+    std::string error;
+    if (!LoadUnityAnim(*path, clip, error)) {
+        Notify("Animation: " + error, true);
+        showAnimWindow_ = true;
+        return;
+    }
+    clip_       = std::move(clip);
+    clipLoaded_ = true;
+    clipPath_   = *path;
+    animTime_   = 0.0f;
+    animPlaying_ = false;
+    for (uint32_t slot = 0; slot < ipc::kMaxDevices; ++slot) {
+        animEnabled_[slot] = clip_.bindings[slot].hasPosition || clip_.bindings[slot].hasRotation ||
+                             (slot == ipc::kSlotHmd && clip_.hmdEstimated);
+    }
+    animApplyOnce_  = true;
+    showAnimWindow_ = true;
+    Notify("Loaded animation " + clip_.name);
+}
+
+void App::UpdateAnimation(float dt) {
+    if (!clipLoaded_) return;
+    if (animPlaying_) {
+        animTime_ += dt * animSpeed_;
+        const float duration = std::max(clip_.duration, 1e-3f);
+        if (animTime_ > duration || animTime_ < 0.0f) {
+            if (animLoop_) {
+                animTime_ = std::fmod(animTime_, duration);
+                if (animTime_ < 0.0f) animTime_ += duration;
+            } else {
+                animTime_    = std::clamp(animTime_, 0.0f, duration);
+                animPlaying_ = false;
+            }
+        }
+    } else if (!animApplyOnce_) {
+        return;
+    }
+    animApplyOnce_ = false;
+
+    animOptions_.yaw = FacingYawRadians(static_cast<Facing>(animFacing_));
+    ipc::DevicePose sampled[ipc::kMaxDevices];
+    std::copy(std::begin(ipc_.Control().poses), std::end(ipc_.Control().poses), std::begin(sampled));
+    bool driven[ipc::kMaxDevices] = {};
+    SampleClip(clip_, animTime_, animOptions_, sampled, driven);
+    for (uint32_t slot = 0; slot < ipc::kMaxDevices; ++slot) {
+        animDriven_[slot] = driven[slot] && animEnabled_[slot];
+        if (animDriven_[slot]) {
+            ipc::DevicePose& p = ipc_.Control().poses[slot];
+            std::copy(std::begin(sampled[slot].position), std::end(sampled[slot].position), std::begin(p.position));
+            std::copy(std::begin(sampled[slot].rotation), std::end(sampled[slot].rotation), std::begin(p.rotation));
+        }
+    }
+}
+
+void App::DrawAnimationWindow() {
+    if (!showAnimWindow_) return;
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Animation Player", &showAnimWindow_)) {
+        ImGui::End();
+        return;
+    }
+    if (ImGui::Button("Load .anim...")) OpenAnimationDialog();
+    if (!clipLoaded_) {
+        ImGui::TextDisabled("No clip loaded. Unity .anim files saved as text (Asset Serialization: Force Text).");
+        ImGui::End();
+        return;
+    }
+    ImGui::SameLine();
+    ImGui::Text("%s  (%s, %.2f s)", clip_.name.c_str(), clip_.kind == AnimClip::Kind::Humanoid ? "Humanoid" : "Generic",
+                clip_.duration);
+
+    // Transport
+    if (ImGui::Button(animPlaying_ ? "Pause" : "Play")) animPlaying_ = !animPlaying_;
+    ImGui::SameLine();
+    if (ImGui::Button("Stop")) {
+        animPlaying_   = false;
+        animTime_      = 0.0f;
+        animApplyOnce_ = true;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Loop", &animLoop_);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::DragFloat("Speed", &animSpeed_, 0.01f, -4.0f, 4.0f, "%.2fx");
+    if (ImGui::SliderFloat("Time", &animTime_, 0.0f, std::max(clip_.duration, 0.001f), "%.2f s")) animApplyOnce_ = true;
+
+    // Placement
+    ImGui::SeparatorText("Placement");
+    bool changed = false;
+    const char* facings[] = {"N (-Z)", "E (+X)", "S (+Z)", "W (-X)"};
+    ImGui::SetNextItemWidth(120.0f);
+    changed |= ImGui::Combo("Facing", &animFacing_, facings, 4);
+    ImGui::SetNextItemWidth(120.0f);
+    changed |= ImGui::DragFloat("Scale", &animOptions_.scale, 0.005f, 0.1f, 3.0f, "%.3f");
+    changed |= ImGui::DragFloat3("Offset (m)", &animOptions_.offset.x, 0.01f, -20.0f, 20.0f, "%.2f");
+    if (clip_.hmdEstimated) {
+        ImGui::SetNextItemWidth(120.0f);
+        changed |= ImGui::DragFloat("Head above body", &animOptions_.headOffset, 0.005f, 0.0f, 1.5f, "%.3f");
+        HelpMarker("Humanoid clips have no head goal. The HMD is placed this far above the body center (RootT), "
+                   "in the clip's units (before Scale).");
+    }
+    if (changed && !animPlaying_) animApplyOnce_ = true;
+
+    // Device bindings
+    ImGui::SeparatorText("Devices");
+    if (ImGui::BeginTable("animdev", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        for (uint32_t slot = 0; slot < ipc::kMaxDevices; ++slot) {
+            const DeviceBinding& b = clip_.bindings[slot];
+            const bool bound = b.hasPosition || b.hasRotation || (slot == ipc::kSlotHmd && clip_.hmdEstimated);
+            if (!bound) continue;
+            ImGui::PushID(static_cast<int>(slot));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::Checkbox("##on", &animEnabled_[slot]) && !animPlaying_) animApplyOnce_ = true;
+            ImGui::SameLine();
+            ImGui::TextUnformatted(DescribeSlot(slot).name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", b.source.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s%s", (b.hasPosition || slot == ipc::kSlotHmd) ? "pos " : "",
+                                (b.hasRotation || slot == ipc::kSlotHmd) ? "rot" : "");
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled("Unchecked devices keep their manual pose. Animated devices can't be dragged while playing.");
+    for (const std::string& w : clip_.warnings) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", w.c_str());
+    ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
+// Spout2 receiver window
+// ---------------------------------------------------------------------------
+void App::DrawSpoutWindow() {
+    if (!showSpoutWindow_) {
+        if (spout_.HasFrame()) spout_.Reset();
+        return;
+    }
+    ImGuiWindowClass windowClass;
+    windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetNextWindowClass(&windowClass);
+    if (spoutPopOut_ && spout_.HasFrame()) {
+        spoutPopOut_ = false;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float chrome = ImGui::GetFrameHeight() + ImGui::GetFrameHeightWithSpacing() * 2.0f + style.WindowPadding.y * 2.0f;
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->Pos.x + 100.0f, ImGui::GetMainViewport()->Pos.y + 100.0f),
+                                ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(spout_.Width() + style.WindowPadding.x * 2.0f, spout_.Height() + chrome),
+                                 ImGuiCond_Always);
+        spoutNativeSize_ = true;
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(640, 420), ImGuiCond_FirstUseEver);
+    }
+
+    if (!ImGui::Begin("Spout2 Receiver", &showSpoutWindow_, spoutNativeSize_ ? ImGuiWindowFlags_HorizontalScrollbar : 0)) {
+        ImGui::End();
+        return;
+    }
+
+    // Sender selection
+    const std::vector<std::string> senders = SpoutReceiver::ListSenders();
+    const std::string preview = spoutSender_.empty() ? "Active sender" : spoutSender_;
+    ImGui::SetNextItemWidth(260.0f);
+    if (ImGui::BeginCombo("Sender", preview.c_str())) {
+        if (ImGui::Selectable("Active sender", spoutSender_.empty())) spoutSender_.clear();
+        for (const std::string& s : senders) {
+            if (ImGui::Selectable(s.c_str(), s == spoutSender_)) spoutSender_ = s;
+        }
+        if (senders.empty()) ImGui::TextDisabled("(no Spout senders running)");
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("1:1 pixels##spout", &spoutNativeSize_);
+    ImGui::SameLine();
+    if (ImGui::Button("Pop out##spout")) spoutPopOut_ = true;
+
+    if (spout_.HasFrame()) {
+        ImGui::Text("%s   %u x %u", spout_.ConnectedSender().c_str(), spout_.Width(), spout_.Height());
+    } else {
+        ImGui::TextDisabled("%s", spout_.Status().c_str());
+    }
+
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (spout_.HasFrame()) {
+        const float tw = static_cast<float>(spout_.Width()), th = static_cast<float>(spout_.Height());
+        ImVec2 size(tw, th);
+        if (!spoutNativeSize_) {
+            const float scale = std::min(avail.x / tw, avail.y / th);
+            size = ImVec2(std::max(1.0f, tw * scale), std::max(1.0f, th * scale));
+            ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + (avail.x - size.x) * 0.5f,
+                                       ImGui::GetCursorPosY() + std::max(0.0f, (avail.y - size.y) * 0.5f)));
+        }
+        ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(spout_.Texture())), size);
+    } else {
+        ImGui::Dummy(ImVec2(avail.x, std::max(avail.y, 40.0f)));
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled(mn, mx, IM_COL32(10, 10, 12, 255));
+        const char*  text = "No Spout2 input";
+        const ImVec2 ts   = ImGui::CalcTextSize(text);
+        ImGui::GetWindowDrawList()->AddText(ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f),
+                                            IM_COL32(120, 120, 130, 255), text);
+    }
+    ImGui::End();
 }
 
 void App::BumpConfigRevision() {

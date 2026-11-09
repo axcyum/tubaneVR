@@ -11,6 +11,14 @@ add_executable(tubane_sandbox WIN32
     src/hmd_viewer.h
     src/input_devices.cpp
     src/input_devices.h
+    src/anim_clip.cpp
+    src/anim_clip.h
+    src/scene_file.cpp
+    src/scene_file.h
+    src/spout_receiver.cpp
+    src/spout_receiver.h
+    src/file_dialog.cpp
+    src/file_dialog.h
     src/ipc_link.cpp
     src/ipc_link.h
     src/renderer.cpp
@@ -20,7 +28,7 @@ add_executable(tubane_sandbox WIN32
     src/math_util.h)
 
 target_link_libraries(tubane_sandbox PRIVATE tubane::common tubane::imgui tubane::imguizmo
-    xinput dinput8 dxguid)
+    nlohmann_json::nlohmann_json xinput dinput8 dxguid comdlg32)
 
 if(MSVC)
     target_compile_options(tubane_sandbox PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)

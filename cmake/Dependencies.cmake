@@ -53,6 +53,14 @@ if(TUBANE_BUILD_SANDBOX)
         SOURCE_SUBDIR  _tubane_no_cmake)
     FetchContent_MakeAvailable(imguizmo)
 
+    # --- nlohmann/json (scene files) --------------------------------------------
+    set(JSON_BuildTests OFF CACHE INTERNAL "")
+    FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG        v3.11.3
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(nlohmann_json)
+
     add_library(imguizmo STATIC "${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp")
     add_library(tubane::imguizmo ALIAS imguizmo)
     target_include_directories(imguizmo SYSTEM PUBLIC "${imguizmo_SOURCE_DIR}/src")

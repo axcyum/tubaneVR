@@ -5,8 +5,13 @@
 #include <imgui.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <string>
 
+#include "anim_clip.h"
 #include "camera.h"
+#include "scene_file.h"
+#include "spout_receiver.h"
 #include "d3d11_context.h"
 #include "hmd_viewer.h"
 #include "input_devices.h"
@@ -53,6 +58,19 @@ private:
     // UI
     void BuildDefaultLayout(ImGuiID dockspace);
     void DrawMenuBar();
+    void DrawFileMenu();
+    void DrawAnimationWindow();
+    void DrawSpoutWindow();
+
+    // File menu actions
+    void SaveSceneTo(const std::filesystem::path& path);
+    void LoadSceneFrom(const std::filesystem::path& path);
+    void SaveSceneDialog(bool saveAs);
+    void OpenSceneDialog();
+    void OpenAnimationDialog();
+    void ApplyTPose(Facing facing);
+    void UpdateAnimation(float dt);
+    void Notify(const std::string& message, bool error = false);
     void DrawViewport(float dt);
     void DrawViewportToolbar();
     void DrawDevicesPanel();
@@ -91,6 +109,36 @@ private:
     // Physical input -> controller buttons / sticks (never poses).
     GamepadSource       gamepad_;
     KeyboardMouseSource keyboardMouse_;
+
+    // Scene file / presets
+    std::filesystem::path scenePath_;
+    float                 bodyHeight_ = 1.70f;
+    std::string           notifyText_;
+    bool                  notifyError_ = false;
+    double                notifyUntil_ = 0.0;
+    double                now_ = 0.0;
+
+    // Unity animation playback (drives poses of the checked devices)
+    AnimClip              clip_;
+    bool                  clipLoaded_ = false;
+    std::filesystem::path clipPath_;
+    bool                  showAnimWindow_ = false;
+    bool                  animPlaying_ = false;
+    bool                  animLoop_ = true;
+    bool                  animApplyOnce_ = false;  // apply current time while paused (scrubbing)
+    float                 animTime_ = 0.0f;
+    float                 animSpeed_ = 1.0f;
+    int                   animFacing_ = 0;          // Facing index
+    AnimSampleOptions     animOptions_;
+    bool                  animEnabled_[ipc::kMaxDevices] = {};
+    bool                  animDriven_[ipc::kMaxDevices] = {};  // written by the clip in the last sample
+
+    // Spout2 receiver
+    SpoutReceiver         spout_;
+    bool                  showSpoutWindow_ = false;
+    std::string           spoutSender_;            // empty = active sender
+    bool                  spoutNativeSize_ = false;
+    bool                  spoutPopOut_ = false;
 
     // HMD Viewer panel
     bool viewerNativeSize_ = false;  // 1:1 pixels instead of fit-to-panel
