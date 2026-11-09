@@ -26,6 +26,8 @@ struct DriverSettings {
     int32_t               windowY          = 0;
     uint32_t              windowWidth      = 1920;
     uint32_t              windowHeight     = 540;
+    bool                  directMode       = true;  // false = SteamVR desktop "Headset Window"
+    uint32_t              adapterIndex     = 0;     // DXGI adapter used in direct mode
 };
 
 const char*           ToSettingString(ipc::ResolutionPreset preset);

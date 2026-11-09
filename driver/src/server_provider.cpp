@@ -18,28 +18,25 @@ vr::EVRInitError ServerProvider::Init(vr::IVRDriverContext* driverContext) {
     VR_INIT_SERVER_DRIVER_CONTEXT(driverContext);
 
     settings_ = LoadSettings();
-    Log("init: resolution=%s trackers=%u freq=%.1f", ToSettingString(settings_.resolution), settings_.trackerCount,
-        settings_.displayFrequency);
+    Log("init: resolution=%s trackers=%u freq=%.1f directMode=%d", ToSettingString(settings_.resolution),
+        settings_.trackerCount, settings_.displayFrequency, settings_.directMode ? 1 : 0);
 
     // --- IPC ---------------------------------------------------------------
     // Failure is not fatal: devices fall back to their default poses.
-    const ipc::OpenResult shmResult = shm_.Open(ipc::OpenMode::CreateOrOpen);
+    const ipc::OpenResult shmResult = ipc_.Open();
     if (shmResult == ipc::OpenResult::Ok) {
-        ipc::SharedState& state = *shm_.State();
-        ipc::SeqRecoverWriter(state.driverLock);  // previous vrserver may have died mid-write
-
         ipc::ControlBlock control{};
-        if (ipc::ReadControl(state, control)) {
+        if (ipc_.ReadControl(control)) {
             lastConfigRevision_ = control.config.revision;  // never re-apply stale requests
         }
-        Log("shared memory %s (%s)", shm_.Created() ? "created" : "opened", ipc::ToString(shmResult));
+        Log("shared memory %s (%s)", ipc_.Created() ? "created" : "opened", ipc::ToString(shmResult));
     } else {
         Log("shared memory unavailable: %s (win32 error %lu) - using default poses", ipc::ToString(shmResult),
-            shm_.LastError());
+            ipc_.LastError());
     }
 
     // --- Devices -----------------------------------------------------------
-    hmd_       = std::make_unique<HmdDevice>(settings_);
+    hmd_       = std::make_unique<HmdDevice>(settings_, &ipc_);
     leftHand_  = std::make_unique<ControllerDevice>(Hand::Left);
     rightHand_ = std::make_unique<ControllerDevice>(Hand::Right);
 
@@ -80,24 +77,24 @@ void ServerProvider::Cleanup() {
     rightHand_.reset();
     leftHand_.reset();
     hmd_.reset();
-    shm_.Close();
+    ipc_.WriteDriver([](ipc::DriverBlock& d) { d.driverProcessId = 0; });
+    ipc_.Close();
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 }
 
 void ServerProvider::PoseThreadMain() {
     SetThreadDescription(GetCurrentThread(), L"tubane pose thread");
 
-    auto next = std::chrono::steady_clock::now();
+    auto              next = std::chrono::steady_clock::now();
     ipc::ControlBlock control{};
-    bool haveControl = false;
+    bool              haveControl = false;
 
     while (running_.load(std::memory_order_relaxed)) {
-        if (shm_.IsOpen()) {
+        if (ipc_.IsOpen()) {
             // On a failed read keep the previous snapshot; better than snapping
             // devices back to defaults for one tick.
-            haveControl = ipc::ReadControl(*shm_.State(), control) || haveControl;
-
-            ipc::WriteDriver(*shm_.State(), [](ipc::DriverBlock& d) { ++d.driverHeartbeat; });
+            haveControl = ipc_.ReadControl(control) || haveControl;
+            ipc_.WriteDriver([](ipc::DriverBlock& d) { ++d.driverHeartbeat; });
         }
 
         for (DeviceBase* device : devices_) {
@@ -119,7 +116,7 @@ void ServerProvider::RunFrame() {
     while (vr::VRServerDriverHost()->PollNextEvent(&event, sizeof(event))) {
     }
 
-    if (!shm_.IsOpen()) {
+    if (!ipc_.IsOpen()) {
         return;
     }
 
@@ -137,7 +134,7 @@ void ServerProvider::RunFrame() {
     }
 
     ipc::ControlBlock control{};
-    if (!ipc::ReadControl(*shm_.State(), control)) {
+    if (!ipc_.ReadControl(control)) {
         return;
     }
 
@@ -167,15 +164,12 @@ void ServerProvider::ApplyConfigChanges(const ipc::ControlConfig& config) {
 
     restartRequired_ = (config.resolution != settings_.resolution) || (trackerCount != settings_.trackerCount);
 
-    // Live values (viewerEye) are consumed directly by the frame-copy path in Step 3.
+    // viewerEye is live: DirectModeRenderer::Present reads it every frame.
 }
 
 void ServerProvider::PublishDriverStatus() {
-    if (!shm_.IsOpen()) {
-        return;
-    }
     const ipc::Resolution res = ipc::ResolutionOf(settings_.resolution);
-    ipc::WriteDriver(*shm_.State(), [&](ipc::DriverBlock& d) {
+    ipc_.WriteDriver([&](ipc::DriverBlock& d) {
         d.driverProcessId    = GetCurrentProcessId();
         d.activeTrackerCount = static_cast<uint32_t>(trackers_.size());
         d.renderWidth        = res.width;

@@ -89,6 +89,11 @@ driver/src/
 |---|---|---|
 | vrserver メインスレッド | `Init` / `RunFrame` / `Cleanup` / `Activate` / 入力更新 / 設定反映 | SteamVR のフレーム毎 |
 | tubane pose thread | 共有メモリから姿勢を読み、`TrackedDevicePoseUpdated` を呼ぶ。ドライバのハートビートを更新する | 約 500Hz（2ms） |
+| tubane vsync thread | `VsyncEvent` を送る（direct mode のみ） | `displayFrequency`（既定 90Hz） |
+| コンポジタ呼び出しのスレッド | `CreateSwapTextureSet` / `SubmitLayer` / `Present`（`DirectModeRenderer` の mutex で保護） | フレーム毎 |
+
+DriverBlock には複数のスレッドが書き込むため、すべての書き込みを `DriverIpc::WriteDriver()` の mutex で直列化しています
+（SeqLock は同時に 1 つの書き込みしか扱えないため）。
 
 - 姿勢をフレーム周期（90Hz）ではなく 500Hz で送るのは、サンドボックス側の操作がコンポジタの予測に滑らかに反映されるようにするためです
 - `DeviceBase::objectId_` は atomic で、`Activate` 前の `PushPose` は何もしません
@@ -107,13 +112,15 @@ driver/src/
 
 ### 3.4 HMD の表示経路
 
-#### Step 1（現在）: Extended Mode
+設定 `directMode` で 2 つの方式を切り替えます。どちらも、レンズ歪みは恒等写像、FOV は水平 90°（垂直はアスペクト比から算出）です。
 
-`IVRDisplayComponent` のみを実装し、`IsDisplayOnDesktop() == true` を返します。
-SteamVR のコンポジタが `windowX/Y/Width/Height` の位置に通常のウィンドウを開き、左右の目を横に並べて描画します。
-OpenVR SDK の `driver_sample`（null driver）と同じ方式です。レンズ歪みは恒等写像、FOV は水平 90° です。
+#### Extended Mode（`directMode = false`、フォールバック）
 
-#### Step 3（予定）: Direct Mode + 共有テクスチャ
+`IVRDisplayComponent` のみを使い、`IsDisplayOnDesktop() == true` を返します。
+SteamVR のコンポジタが `windowX/Y/Width/Height` の位置に通常のウィンドウ（Headset Window）を開き、左右の目を横に並べて描画します。
+OpenVR SDK の `driver_sample`（null driver）と同じ方式です。direct mode の初期化（D3D11 デバイスや共有テクスチャの作成）に失敗した場合も自動的にこちらになります。
+
+#### Direct Mode + 共有テクスチャ（`directMode = true`、既定）
 
 ```
 アプリ ──Submit──▶ SteamVR コンポジタ
@@ -135,8 +142,15 @@ OpenVR SDK の `driver_sample`（null driver）と同じ方式です。レンズ
 
 - `IVRDriverDirectModeComponent` を選ぶのは、左右の目を **個別のテクスチャ** として受け取れるためです
   （`IVRVirtualDisplay` は合成・歪み補正後の 1 枚しか受け取れず、目の切替に余計な処理が必要になります）
-- コンポジタとサンドボックスが **同じ GPU アダプタ** 上にある必要があるため、ドライバはアダプタの LUID を
-  `DriverBlock::adapterLuid` に書き込み、サンドボックスは起動時に照合します
+- ドライバは `adapterIndex` で選んだ GPU に自前の D3D11 デバイスを作り、その LUID を `Prop_GraphicsAdapterLuid_Uint64` に設定して
+  コンポジタにも同じ GPU を使わせます。サンドボックスとも **同じ GPU** である必要があるため、LUID を `DriverBlock::adapterLuid` に書き、
+  サンドボックス側で照合します
+- 実ディスプレイが無いため、ドライバの vsync スレッドが `displayFrequency` ごとに `VsyncEvent` を送り、コンポジタのフレームを刻みます
+  （`Prop_DriverDirectModeSendsVsyncEvents_Bool = true`）
+- コンポジタのスワップテクスチャの形式やサイズ（SteamVR の解像度スケールが掛かる）は任意なので、`CopyResource` ではなく
+  全画面三角形のシェーダーで、拡大縮小・`bounds` の切り出し・色空間の正規化をまとめて行います
+- Keyed Mutex は両側とも待ち時間 0 で使い、相手が使用中ならそのフレームを捨てます。サンドボックスが停止していてもコンポジタは止まりません
+- 詳細なプロトコルは [ipc.md の 7 章](ipc.md#7-映像経路共有テクスチャ) を参照してください
 - 解像度（片目あたりのレンダーターゲット）は `GetRecommendedRenderTargetSize` で返します。
   SteamVR はセッション中のサイズ変更に追従しないため、FHD / WQHD の切替は SteamVR 再起動で反映されます。
   ビューワーウィンドウの拡大縮小は即時に反映できます

@@ -8,6 +8,8 @@
 		"windowX": 0,
 		"windowY": 0,
 		"windowWidth": 1920,
-		"windowHeight": 540
+		"windowHeight": 540,
+		"directMode": true,
+		"adapterIndex": 0
 	}
 }

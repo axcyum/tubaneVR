@@ -8,6 +8,7 @@
 
 #include "camera.h"
 #include "d3d11_context.h"
+#include "hmd_viewer.h"
 #include "ipc_link.h"
 #include "math_util.h"
 #include "renderer.h"
@@ -76,6 +77,11 @@ private:
     Renderer      renderer_;
     Camera        camera_;
     IpcLink       ipc_;
+    HmdViewer     viewer_;
+
+    // HMD Viewer panel
+    bool viewerNativeSize_ = false;  // 1:1 pixels instead of fit-to-panel
+    bool viewerPopOut_     = false;  // request: undock into its own OS window at native size
 
     int  selected_ = ipc::kSlotHmd;  // slot index, -1 = none
     int  gizmoOperation_ = 0;        // 0 = move, 1 = rotate, 2 = both

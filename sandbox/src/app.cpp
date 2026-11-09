@@ -138,6 +138,7 @@ void App::Shutdown() {
 void App::Frame(float dt, double now) {
     ipc_.PollDriver(now);
     SyncConfigFromDriver();
+    viewer_.Update(d3d_->Device(), d3d_->Context(), ipc_.Driver(), ipc_.DriverAlive(), now);
 
     ImGuizmo::BeginFrame();
 
@@ -184,8 +185,8 @@ void App::BuildDefaultLayout(ImGuiID dockspace) {
     ImGui::DockBuilderDockWindow(kWinDevices, left);
     ImGui::DockBuilderDockWindow(kWinInspector, leftBottom);
     ImGui::DockBuilderDockWindow(kWinInput, right);
-    ImGui::DockBuilderDockWindow(kWinDriver, rightBottom);
     ImGui::DockBuilderDockWindow(kWinViewer, rightBottom);
+    ImGui::DockBuilderDockWindow(kWinDriver, rightBottom);
     ImGui::DockBuilderFinish(dockspace);
 }
 
@@ -846,17 +847,100 @@ void App::DrawDriverPanel() {
 }
 
 void App::DrawViewerPanel() {
-    if (!ImGui::Begin(kWinViewer)) {
+    // The viewer always gets its own OS window when floating (never merged
+    // into the main window), so "Pop out" yields an independent window.
+    ImGuiWindowClass windowClass;
+    windowClass.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetNextWindowClass(&windowClass);
+
+    const ipc::DriverBlock& d = ipc_.Driver();
+    if (viewerPopOut_) {
+        viewerPopOut_ = false;
+        const float w = static_cast<float>(viewer_.HasFrame() ? viewer_.Width() : ipc::ResolutionOf(ipc_.Control().config.resolution).width);
+        const float h = static_cast<float>(viewer_.HasFrame() ? viewer_.Height() : ipc::ResolutionOf(ipc_.Control().config.resolution).height);
+        const ImGuiViewport* main = ImGui::GetMainViewport();
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(main->Pos.x + 60.0f, main->Pos.y + 60.0f), ImGuiCond_Always);
+        // Window = native-resolution image + title bar + toolbar + status line.
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float chrome = ImGui::GetFrameHeight() + ImGui::GetFrameHeightWithSpacing() * 2.0f +
+                             style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
+        ImGui::SetNextWindowSize(ImVec2(w + style.WindowPadding.x * 2.0f, h + chrome), ImGuiCond_Always);
+        viewerNativeSize_ = true;
+    }
+
+    if (!ImGui::Begin(kWinViewer, nullptr, viewerNativeSize_ ? ImGuiWindowFlags_HorizontalScrollbar : 0)) {
         ImGui::End();
         return;
     }
-    const ipc::ControlConfig& cfg = ipc_.Control().config;
-    const ipc::Resolution     res = ipc::ResolutionOf(cfg.resolution);
-    ImGui::TextWrapped("HMD video output arrives in Step 3 (D3D11 shared texture from the driver's direct-mode component).");
-    ImGui::Spacing();
-    ImGui::Text("Eye: %s", cfg.viewerEye == ipc::ViewerEye::Right ? "Right" : "Left");
-    ImGui::Text("Resolution: %u x %u", res.width, res.height);
-    ImGui::TextDisabled("Until then, SteamVR shows its own \"Headset Window\".");
+
+    ipc::ControlConfig& cfg = ipc_.Control().config;
+
+    // --- Toolbar ------------------------------------------------------------
+    ImGui::TextUnformatted("Eye");
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Left##eye", cfg.viewerEye == ipc::ViewerEye::Left)) {
+        cfg.viewerEye = ipc::ViewerEye::Left;
+        BumpConfigRevision();
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Right##eye", cfg.viewerEye == ipc::ViewerEye::Right)) {
+        cfg.viewerEye = ipc::ViewerEye::Right;
+        BumpConfigRevision();
+    }
+    ImGui::SameLine(0.0f, 16.0f);
+    int res = cfg.resolution == ipc::ResolutionPreset::WQHD ? 1 : 0;
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("WQHD 2560x1440").x + ImGui::GetFrameHeight() * 2.0f);
+    if (ImGui::Combo("##res", &res, "FHD 1920x1080\0WQHD 2560x1440\0")) {
+        cfg.resolution = res == 1 ? ipc::ResolutionPreset::WQHD : ipc::ResolutionPreset::FHD;
+        BumpConfigRevision();
+    }
+
+    // --- Second row: view options + status ------------------------------------
+    ImGui::Checkbox("1:1 pixels", &viewerNativeSize_);
+    ImGui::SameLine();
+    if (ImGui::Button("Pop out")) viewerPopOut_ = true;
+    ImGui::SetItemTooltip("Open the viewer as its own window at the render resolution");
+    ImGui::SameLine(0.0f, 16.0f);
+    if (viewer_.HasFrame()) {
+        ImGui::Text("%u x %u   %.0f fps   frame %llu", viewer_.Width(), viewer_.Height(), viewer_.Fps(),
+                    static_cast<unsigned long long>(d.frameIndex));
+    } else {
+        ImGui::TextDisabled("%s", viewer_.Status());
+    }
+    if (ipc_.DriverAlive() && d.restartRequired) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "  restart SteamVR to apply the new resolution");
+    }
+    if (ipc_.DriverAlive() && d.displayMode == ipc::kDisplayDirect && d.adapterLuid != 0 &&
+        d.adapterLuid != d3d_->AdapterLuid()) {
+        ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "GPU mismatch: SteamVR renders on another adapter (LUID 0x%llX)",
+                           static_cast<unsigned long long>(d.adapterLuid));
+    }
+
+    // --- Image ----------------------------------------------------------------
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (viewer_.HasFrame()) {
+        const float tw = static_cast<float>(viewer_.Width());
+        const float th = static_cast<float>(viewer_.Height());
+        ImVec2 size(tw, th);
+        if (!viewerNativeSize_) {
+            const float scale = std::min(avail.x / tw, avail.y / th);
+            size = ImVec2(std::max(1.0f, tw * scale), std::max(1.0f, th * scale));
+            // Center inside the panel.
+            ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + (avail.x - size.x) * 0.5f,
+                                       ImGui::GetCursorPosY() + std::max(0.0f, (avail.y - size.y) * 0.5f)));
+        }
+        ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(viewer_.Texture())), size);
+    } else {
+        ImGui::Dummy(ImVec2(avail.x, std::max(avail.y, 40.0f)));
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRectFilled(mn, mx, IM_COL32(10, 10, 12, 255));
+        const char* text = "No HMD image";
+        const ImVec2 ts = ImGui::CalcTextSize(text);
+        ImGui::GetWindowDrawList()->AddText(ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f),
+                                            IM_COL32(120, 120, 130, 255), text);
+    }
     ImGui::End();
 }
 

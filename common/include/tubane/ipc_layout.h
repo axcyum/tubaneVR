@@ -138,6 +138,17 @@ struct ControlConfig {
     uint32_t         reserved[4];
 };
 
+enum DisplayMode : uint32_t {
+    kDisplayExtended = 0,  // SteamVR "Headset Window" on the desktop (no shared texture)
+    kDisplayDirect   = 1,  // IVRDriverDirectModeComponent -> shared texture for the sandbox viewer
+};
+
+// Shared frame texture (driver -> sandbox), see docs/ipc.md "映像経路":
+//   format  DXGI_FORMAT_R8G8B8A8_TYPELESS (holds sRGB-encoded 8-bit RGBA; view it as *_UNORM)
+//   flags   D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX
+//   sync    keyed mutex, key 0 on both sides, never blocking (AcquireSync(0, 0))
+//   size    DriverBlock::renderWidth x renderHeight
+
 // ---------------------------------------------------------------------------
 // Blocks
 // ---------------------------------------------------------------------------
@@ -161,10 +172,10 @@ struct DriverBlock {
     ResolutionPreset activeResolution;  // preset in effect for this SteamVR session
     uint32_t restartRequired;     // 1 = saved settings differ from the running session
     uint32_t appliedRevision;     // last ControlConfig::revision the driver processed
-    uint32_t reserved0;           // explicit padding (keeps adapterLuid 8-byte aligned)
-    uint64_t adapterLuid;         // GPU adapter LUID used by the compositor (Step 3)
-    uint64_t frameIndex;          // incremented per presented frame       (Step 3)
-    wchar_t  frameTextureName[64];// named NT handle of the shared frame   (Step 3)
+    uint32_t displayMode;         // DisplayMode: how the HMD image is delivered
+    uint64_t adapterLuid;         // GPU adapter LUID the compositor renders on (direct mode)
+    uint64_t frameIndex;          // incremented per frame written to the shared texture
+    wchar_t  frameTextureName[64];// name of the shared frame texture (NT handle), empty = none
     uint32_t deviceIds[kMaxDevices]; // OpenVR tracked-device index per slot, 0xFFFFFFFF = none
 };
 

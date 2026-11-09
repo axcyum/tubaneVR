@@ -5,8 +5,8 @@
 SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC Vive Tracker（初期値 3 台）を認識させ、
 それらの位置・姿勢・ボタン入力を PC 上の 3D サンドボックス GUI からマウス / キーボードで自由に操作できるようにします。
 
-> **現在の進捗: Step 2（3D サンドボックス GUI）完了**
-> HMD 映像出力ビューワー（Step 3）は未実装です。詳細は [ロードマップ](#ロードマップ) を参照してください。
+> **現在の進捗: Step 3（HMD 映像出力ビューワー）完了**
+> 残りの課題（骨格入力・速度の算出など）は [ロードマップ](#ロードマップ) を参照してください。
 
 ---
 
@@ -218,7 +218,8 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 2. SteamVR を起動する
 3. 次の点を確認する
    - SteamVR のステータスウィンドウに **HMD・コントローラー 2 本・トラッカー 3 台** が表示される
-   - デスクトップの左上に、左右の目を横に並べた 1920×540 の SteamVR コンポジタウィンドウが開く（Step 1 の暫定表示。Step 3 で専用ビューワーに置き換え予定）
+   - `<Steam>\logs\vrcompositor.txt` に `Headset is using driver direct mode` と出ている（direct mode。デスクトップに SteamVR のウィンドウは開きません。
+     `directMode` を `false` にした場合だけ、左右の目を横に並べた SteamVR の「Headset Window」が開きます）
    - 「設定 → コントローラー → Vive トラッカーを管理」で、トラッカーが腰・左足・右足に割り当てられている
 4. `<Steam>\logs\vrserver.txt` を `[tubane]` で検索し、次のようなログが出ていることを確認する
 
@@ -268,7 +269,7 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 | **Inspector** | 選択中デバイスの位置（m）・回転（Pitch / Yaw / Roll、度）を数値で編集。クォータニオン (w, x, y, z) も表示。`Connected` / `Tracking valid` を外すと、切断状態やトラッキングロストを再現できます |
 | **Controller Input** | 左右の Index コントローラーの入力。`press` は押している間だけ ON、`Click` / `Touch` のチェックは押しっぱなし。トリガー・グリップ・トラックパッド圧は スライダー、スティック・トラックパッドは円形パッドをドラッグ（`Spring` が ON なら離すと中央に戻る） |
 | **Driver / Settings** | ドライバの接続状態、レンダー解像度、トラッカー数、GPU。解像度（FHD / WQHD）とトラッカー数（0〜8）の変更は `steamvr.vrsettings` に保存され、SteamVR の再起動後に反映されます |
-| **HMD Viewer** | Step 3 で HMD の映像を表示する予定のパネル（現在は設定の表示のみ） |
+| **HMD Viewer** | 仮想 HMD に描画された映像をリアルタイムに表示。`Left` / `Right` で表示する目を即時に切り替え、解像度（FHD / WQHD）を選択。`1:1 pixels` で等倍表示、`Pop out` で独立したウィンドウとして等倍サイズで開く（詳しくは [HMD 映像ビューワー](#hmd-映像ビューワー)） |
 
 ### 操作方法
 
@@ -295,6 +296,35 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 - **Help** → 操作一覧
 
 ウィンドウのレイアウトは exe と同じフォルダの `tubane_sandbox.ini` に保存されます。削除すると初期レイアウトに戻ります。
+どのパネルもドラッグしてメインウィンドウの外に出すと、独立した OS のウィンドウになります（Dear ImGui の multi-viewport 機能）。
+
+### HMD 映像ビューワー
+
+```
+SteamVR コンポジタ ──▶ ドライバのスワップテクスチャ（左目 / 右目）
+                          │ Present 毎に、選択中の目をシェーダーで拡大縮小・色変換してコピー
+                          ▼
+              共有テクスチャ（FHD または WQHD、NT ハンドル + Keyed Mutex）
+                          │ 新しいフレームが来たら GPU 内でコピー（CPU を経由しない）
+                          ▼
+              tubane-sandbox の HMD Viewer パネル / ポップアウトウィンドウ
+```
+
+| 操作 | 内容 |
+|---|---|
+| `Left` / `Right` | 表示する目を切り替える（即時反映） |
+| 解像度コンボ | `FHD 1920x1080` / `WQHD 2560x1440`。仮想 HMD のレンダーターゲットと共有テクスチャの解像度。**SteamVR の再起動で反映**（Driver / Settings パネルの設定と同じもの） |
+| `1:1 pixels` | 縮小せず等倍で表示（はみ出す場合はスクロール） |
+| `Pop out` | ビューワーを独立したウィンドウとして、レンダー解像度ちょうどの大きさで開く。閉じるときはそのウィンドウのタブをメインウィンドウにドラッグして戻す |
+
+ステータス行には受信解像度・受信フレームレート・フレーム番号が表示されます。
+
+- 表示のフレームレートはモニターのリフレッシュレートが上限です（コンポジタは `displayFrequency`＝既定 90Hz で描画しています）
+- SteamVR の解像度スケール（設定 → ビデオ → 解像度）によってアプリの描画解像度は変わりますが、共有テクスチャは常に FHD / WQHD に拡大縮小されます
+- 表示されるのは各フレームの最初のレイヤー（アプリ、または SteamVR Home / ダッシュボード）です。
+  オーバーレイなどの追加レイヤーは合成されません
+- SteamVR とサンドボックスは **同じ GPU** で動いている必要があります。異なる場合はパネルに `GPU mismatch` と表示されます
+  （ドライバが使う GPU は設定 `adapterIndex` で変更できます）
 
 ### 注意事項
 
@@ -349,7 +379,9 @@ tubane_shm_probe trigger right 1
 | `trackerCount` | int | `3` | スポーンするトラッカーの台数（0〜8）。**SteamVR 再起動で反映** |
 | `displayFrequency` | float | `90.0` | 仮想ディスプレイのリフレッシュレート（Hz） |
 | `ipd` | float | `0.063` | 瞳孔間距離（m） |
-| `windowX` / `windowY` | int | `0` / `0` | Step 1 の暫定コンポジタウィンドウの位置 |
+| `directMode` | bool | `true` | `true` = direct mode（映像を共有テクスチャでサンドボックスへ渡す。デスクトップにウィンドウは開かない）。`false` = SteamVR の「Headset Window」をデスクトップに表示（共有テクスチャ無し） |
+| `adapterIndex` | int | `0` | direct mode で使う GPU（DXGI の列挙順）。SteamVR のコンポジタもこの GPU で描画する |
+| `windowX` / `windowY` | int | `0` / `0` | `directMode=false` のときの Headset Window の位置 |
 | `windowWidth` / `windowHeight` | int | `1920` / `540` | 同ウィンドウのサイズ（左右の目を横並びで表示） |
 
 `resolutionPreset` と `trackerCount` は、サンドボックス（または `tubane_shm_probe`）から共有メモリ経由で変更要求を出すと、
@@ -413,6 +445,9 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
 | サンドボックスで「SteamVR driver not running」のまま | SteamVR が起動していない、またはドライバがロードされていない。ドライバのハートビートが 1 秒以上止まるとこの表示になる |
 | サンドボックスで動かしても SteamVR 側が動かない | サンドボックスが 2 つ起動している、または `tubane_shm_probe` の書き込み系コマンドが動いている。Driver / Settings パネルの警告を確認する |
 | サンドボックスのレイアウトが崩れた | exe と同じフォルダの `tubane_sandbox.ini` を削除して再起動する |
+| HMD Viewer が「No HMD image」のまま | `vrserver.txt` に `direct mode: shared frame texture ...` が出ているか確認する。出ていなければ direct mode の初期化に失敗し、Headset Window 方式にフォールバックしている（直前のログに理由が出ています） |
+| HMD Viewer に `Cannot open shared frame` / `GPU mismatch` | SteamVR とサンドボックスが別の GPU で動いている。Windows の「グラフィックスの設定」で両方を同じ GPU に割り当てるか、`adapterIndex` を変更する |
+| SteamVR の映像が真っ黒 / 起動しない（direct mode） | `steamvr.vrsettings` の `driver_tubane` に `"directMode": false` を追加すると、従来の Headset Window 方式で起動します |
 
 ---
 
@@ -433,13 +468,18 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
   - [x] 共有メモリへの姿勢書き込み、ドライバ状態表示
   - [x] コントローラー入力パネル（ボタン、トリガー、スティック、指カール）
   - [x] 解像度 / トラッカー数 / 表示する目 の設定 UI
-- [ ] **Step 3** — 映像出力とリアルタイム同期の仕上げ
-  - [ ] `IVRDriverDirectModeComponent` の実装（スワップテクスチャセット）
-  - [ ] 選択した目を D3D11 共有テクスチャ（名前付き NT ハンドル + Keyed Mutex）へコピー
-  - [ ] サンドボックス側ビューワー（左目 / 右目の切替、FHD / WQHD）
-  - [ ] GPU アダプタ LUID の照合
+- [x] **Step 3** — HMD 映像出力
+  - [x] `IVRDriverDirectModeComponent` の実装（スワップテクスチャセット、vsync 通知）
+  - [x] 選択した目を D3D11 共有テクスチャ（名前付き NT ハンドル + Keyed Mutex）へシェーダーでコピー
+  - [x] サンドボックス側ビューワー（左目 / 右目の切替、FHD / WQHD、等倍表示、ポップアウト）
+  - [x] GPU アダプタ LUID の照合（`Prop_GraphicsAdapterLuid_Uint64` でコンポジタの GPU を指定）
+  - [x] DriverBlock への書き込みを複数スレッド間で直列化（SeqLock の単一ライター条件を保証）
+- [ ] **今後の課題**
   - [ ] 骨格入力（Skeletal Input）
   - [ ] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
+  - [ ] ハプティクスの表示
+  - [ ] オーバーレイレイヤーの合成表示
+  - [ ] マルチサンプルのスワップテクスチャへの対応
 
 ---
 

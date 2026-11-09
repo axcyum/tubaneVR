@@ -15,6 +15,9 @@ add_library(driver_tubane SHARED
     src/device_base.h
     src/hmd_device.cpp
     src/hmd_device.h
+    src/direct_mode.cpp
+    src/direct_mode.h
+    src/driver_ipc.h
     src/controller_device.cpp
     src/controller_device.h
     src/tracker_device.cpp
@@ -23,7 +26,7 @@ add_library(driver_tubane SHARED
     src/settings.h
     src/driver_log.h)
 
-target_link_libraries(driver_tubane PRIVATE tubane::common tubane::openvr_headers)
+target_link_libraries(driver_tubane PRIVATE tubane::common tubane::openvr_headers d3d11 dxgi d3dcompiler)
 
 if(MSVC)
     target_compile_options(driver_tubane PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)

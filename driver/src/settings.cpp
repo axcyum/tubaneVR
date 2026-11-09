@@ -27,6 +27,12 @@ float GetFloat(const char* key, float fallback) {
     return err == vr::VRSettingsError_None ? value : fallback;
 }
 
+bool GetBool(const char* key, bool fallback) {
+    vr::EVRSettingsError err = vr::VRSettingsError_None;
+    bool value = vr::VRSettings()->GetBool(kSettingsSection, key, &err);
+    return err == vr::VRSettingsError_None ? value : fallback;
+}
+
 std::string GetString(const char* key, const char* fallback) {
     char buffer[256] = {};
     vr::EVRSettingsError err = vr::VRSettingsError_None;
@@ -47,6 +53,8 @@ DriverSettings LoadSettings() {
     s.windowY          = GetInt("windowY", 0);
     s.windowWidth      = static_cast<uint32_t>(std::max(GetInt("windowWidth", 1920), 64));
     s.windowHeight     = static_cast<uint32_t>(std::max(GetInt("windowHeight", 540), 64));
+    s.directMode       = GetBool("directMode", true);
+    s.adapterIndex     = static_cast<uint32_t>(std::max(GetInt("adapterIndex", 0), 0));
     return s;
 }
 

@@ -68,7 +68,7 @@ void LoadFonts(ImGuiIO& io) {
 void ApplyStyle(float dpiScale) {
     ImGuiStyle& style = ImGui::GetStyle();
     ImGui::StyleColorsDark();
-    style.WindowRounding    = 4.0f;
+    style.WindowRounding    = 0.0f;  // floating windows become OS windows (multi-viewport)
     style.FrameRounding     = 3.0f;
     style.GrabRounding      = 3.0f;
     style.TabRounding       = 3.0f;
@@ -116,6 +116,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCmd) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // Multi-viewports: windows dragged outside the main window (and the
+    // popped-out HMD Viewer) become real OS windows.
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigDpiScaleFonts     = true;
+    io.ConfigDpiScaleViewports = true;
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     static const std::string iniPath = ExeDirectory() + "tubane_sandbox.ini";
     io.IniFilename = iniPath.c_str();
@@ -167,6 +172,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCmd) {
         const float clear[4] = {0.06f, 0.065f, 0.075f, 1.0f};
         g_d3d.BeginFrame(clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
         g_d3d.Present(true);
     }
 

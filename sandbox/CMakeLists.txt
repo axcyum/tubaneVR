@@ -7,6 +7,8 @@ add_executable(tubane_sandbox WIN32
     src/camera.h
     src/d3d11_context.cpp
     src/d3d11_context.h
+    src/hmd_viewer.cpp
+    src/hmd_viewer.h
     src/ipc_link.cpp
     src/ipc_link.h
     src/renderer.cpp

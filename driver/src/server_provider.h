@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "controller_device.h"
+#include "driver_ipc.h"
 #include "hmd_device.h"
 #include "settings.h"
 #include "tracker_device.h"
@@ -47,7 +48,7 @@ private:
     std::vector<std::unique_ptr<TrackerDevice>> trackers_;
     std::vector<DeviceBase*>                    devices_;  // non-owning, all of the above
 
-    ipc::SharedMemory shm_;
+    DriverIpc         ipc_;
     uint32_t          lastConfigRevision_ = 0;
     bool              restartRequired_    = false;
     uint32_t          publishedIds_[ipc::kMaxDevices] = {};  // deviceIds last written to DriverBlock

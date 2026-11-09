@@ -136,9 +136,10 @@ SharedState
 | `activeResolution` | ResolutionPreset | 今回のセッションで有効なプリセット |
 | `restartRequired` | uint32 | 1 = 保存済み設定が実行中のセッションと異なる（SteamVR の再起動が必要） |
 | `appliedRevision` | uint32 | driver が最後に処理した `ControlConfig::revision` |
-| `adapterLuid` | uint64 | コンポジタの GPU アダプタ LUID（Step 3） |
-| `frameIndex` | uint64 | 共有テクスチャへ書き込んだフレーム数（Step 3） |
-| `frameTextureName[64]` | wchar_t | 共有テクスチャの NT ハンドル名（Step 3） |
+| `displayMode` | uint32 | `kDisplayExtended`(0) = Headset Window 方式 / `kDisplayDirect`(1) = 共有テクスチャ方式 |
+| `adapterLuid` | uint64 | コンポジタの GPU アダプタ LUID（direct mode） |
+| `frameIndex` | uint64 | 共有テクスチャへ書き込んだフレーム数 |
+| `frameTextureName[64]` | wchar_t | 共有テクスチャの NT ハンドル名。空 = 共有テクスチャ無し |
 | `deviceIds[kMaxDevices]` | uint32 | スロット毎の OpenVR デバイスインデックス。`0xFFFFFFFF` は未割り当て |
 
 ---
@@ -204,7 +205,7 @@ config.revision++            ──────▶      RunFrame: revision の�
 
 - driver は `Init()` の時点の `revision` を記録し、**それ以降に revision が変化したときだけ** 設定を保存します。
   そのため、共有メモリに残っている古い値や初期値が、ユーザーの保存済み設定を上書きすることはありません
-- `viewerEye` は即時に反映される値なので、revision とは関係なく毎フレーム参照されます（Step 3）
+- `viewerEye` は即時に反映される値なので、revision とは関係なく driver の `Present` で毎フレーム参照されます
 
 ---
 
@@ -218,13 +219,37 @@ config.revision++            ──────▶      RunFrame: revision の�
 
 ---
 
-## 7. Step 3 で追加する映像経路（予定）
+## 7. 映像経路（共有テクスチャ）
+
+HMD の映像は共有メモリではなく、D3D11 の共有テクスチャで渡します。共有メモリ（DriverBlock）はその **名前とフレーム番号を知らせるだけ** です。
 
 | 項目 | 内容 |
 |---|---|
-| テクスチャ | `DXGI_FORMAT_R8G8B8A8_UNORM_SRGB`（コンポジタのスワップテクスチャ形式に合わせる）、片目分のサイズ |
-| 共有方法 | `D3D11_RESOURCE_MISC_SHARED_NTHANDLE \| D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX`、`IDXGIResource1::CreateSharedHandle` で名前付き NT ハンドルを作成 |
-| 名前 | `DriverBlock::frameTextureName`（解像度変更などで作り直すときは名前を変え、sandbox は開き直す） |
-| 同期 | Keyed Mutex。driver が key 0 で Acquire → コピー → key 1 で Release、sandbox が key 1 で Acquire → 描画 → key 0 で Release |
-| フレーム通知 | `DriverBlock::frameIndex` をインクリメント。sandbox は値が変わったときだけ描画を更新する |
-| GPU 照合 | `DriverBlock::adapterLuid` と sandbox が使うアダプタの LUID を比較し、異なる場合は警告を表示する |
+| 形式 | `DXGI_FORMAT_R8G8B8A8_TYPELESS`。中身は **sRGB エンコード済みの 8bit RGBA**。読む側は `R8G8B8A8_UNORM` のビューで生の値として扱う（UNORM のスワップチェーンにそのまま描けば正しい色になる） |
+| サイズ | `DriverBlock::renderWidth × renderHeight`（FHD = 1920×1080 / WQHD = 2560×1440） |
+| 共有方法 | `D3D11_RESOURCE_MISC_SHARED_NTHANDLE \| D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX`。`IDXGIResource1::CreateSharedHandle` で名前付き NT ハンドルを作成 |
+| 名前 | `DriverBlock::frameTextureName`（例 `tubane_frame_<vrserver PID>_<連番>`）。作り直すたびに名前が変わるので、sandbox は名前の変化を見て開き直す。空文字列は「共有テクスチャ無し」 |
+| 開き方 | `ID3D11Device1::OpenSharedResourceByName(name, DXGI_SHARED_RESOURCE_READ \| DXGI_SHARED_RESOURCE_WRITE, ...)` |
+| 同期 | Keyed Mutex を **両側とも key 0・待ち時間 0** で使う（`AcquireSync(0, 0)` → 処理 → `ReleaseSync(0)`）。取れなければそのフレームは諦める。どちらも相手を待たないので、サンドボックスが止まってもコンポジタは止まらない |
+| フレーム通知 | driver は書き込むたびに `DriverBlock::frameIndex` を +1。sandbox は値が変わったときだけ自分のテクスチャへ `CopyResource` する（Keyed Mutex を握るのはこのコピーの間だけ） |
+| 表示モード | `DriverBlock::displayMode`：`kDisplayDirect`(1) のときだけ共有テクスチャが存在する。`kDisplayExtended`(0) は SteamVR の Headset Window 方式 |
+| GPU 照合 | driver は `Prop_GraphicsAdapterLuid_Uint64` でコンポジタの GPU を指定し、同じ LUID を `DriverBlock::adapterLuid` に書く。sandbox は自分の GPU と比較し、異なれば警告を出す（異なる GPU 間では共有テクスチャを開けない） |
+
+### driver 内部の処理（`DirectModeRenderer`）
+
+```
+CreateSwapTextureSet   コンポジタの要求サイズ・形式で 3 枚のテクスチャを作成（D3D11_RESOURCE_MISC_SHARED、旧形式ハンドル）
+SubmitLayer            フレームの最初のレイヤー（左目・右目）を記録
+Present(syncTexture)   1. ControlConfig::viewerEye を読む
+                       2. syncTexture の Keyed Mutex を取得（最大 10ms、コンポジタの描画完了待ち）
+                       3. 出力テクスチャの Keyed Mutex を取得（0ms、取れなければスキップ）
+                       4. 全画面三角形シェーダーで、選択した目の bounds 範囲を出力テクスチャへ拡大縮小コピー
+                          （入力が sRGB / float なら sRGB の RTV、それ以外は UNORM の RTV に書き、常に sRGB エンコード済みにする）
+                       5. Mutex を解放、Flush、frameIndex を +1
+vsync thread           displayFrequency ごとに VsyncEvent(0) を呼ぶ（Prop_DriverDirectModeSendsVsyncEvents_Bool = true）
+```
+
+### DriverBlock の書き込みスレッド
+
+DriverBlock は driver プロセスだけが書きますが、書き込むスレッドは 3 つあります（pose thread のハートビート、`RunFrame` の状態更新、`Present` のフレーム番号）。
+SeqLock は同時に 1 つの書き込みしか扱えないため、driver 内ではすべての書き込みを `DriverIpc::WriteDriver()` の mutex で直列化しています。
