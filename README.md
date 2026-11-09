@@ -31,109 +31,60 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
 
 ## 構成概要
 
-### 全体構成
+### 全体概要
 
 ```mermaid
-flowchart LR
-    subgraph SANDBOX["tubane_sandbox.exe（C++ / D3D11 / Dear ImGui / ImGuizmo）"]
-        direction TB
-        UI["3D ビューポート<br/>箱・グリッド・フリーカメラ<br/>選択・ギズモ操作"]
-        PANELS["パネル<br/>Inspector / Controller Input<br/>Driver / Settings"]
-        LINK["IpcLink<br/>ControlBlock の唯一の書き込み手"]
-        VIEWER["HMD Viewer<br/>左目 / 右目・FHD / WQHD<br/>ポップアウト"]
-        UI --> LINK
-        PANELS --> LINK
-    end
-
-    subgraph SHARED["プロセス間共有（同一 PC・同一 GPU）"]
-        direction TB
-        SHM[("共有メモリ<br/>Local\tubane_shared_state_v1<br/>SeqLock 付き固定長構造体")]
-        TEX[["D3D11 共有テクスチャ<br/>名前付き NT ハンドル + Keyed Mutex<br/>R8G8B8A8・FHD / WQHD"]]
-    end
-
-    subgraph VRSERVER["vrserver.exe（SteamVR）"]
-        direction TB
-        subgraph DRIVER["driver_tubane.dll（OpenVR Driver API）"]
-            direction TB
-            PROVIDER["ServerProvider<br/>RunFrame・設定反映"]
-            POSE["pose thread<br/>約 500Hz"]
-            HMD["HmdDevice<br/>仮想 HMD"]
-            DM["DirectModeRenderer<br/>スワップテクスチャ・Present"]
-            CTRL["ControllerDevice ×2<br/>Valve Index（knuckles）"]
-            TRK["TrackerDevice ×N<br/>HTC Vive Tracker"]
-            HMD --- DM
-        end
-    end
-
-    COMP["vrcompositor.exe<br/>SteamVR コンポジタ"]
-    APPS["VR アプリ<br/>VRChat など"]
-    SETTINGS[("steamvr.vrsettings<br/>解像度・トラッカー数")]
-
-    LINK -- "姿勢・入力・設定<br/>毎フレーム書き込み" --> SHM
-    SHM -- "姿勢" --> POSE
-    SHM -- "ボタン・軸・設定" --> PROVIDER
-    PROVIDER -- "状態・デバイス番号" --> SHM
-    SHM -- "接続状態・テクスチャ名・frameIndex" --> LINK
-
-    POSE -- "TrackedDevicePoseUpdated" --> HMD
-    POSE --> CTRL
-    POSE --> TRK
-    PROVIDER -- "Update*Component" --> CTRL
-    PROVIDER -- "永続化" --> SETTINGS
-
-    APPS -- "Submit" --> COMP
-    COMP -- "SubmitLayer / Present" --> DM
-    DM -- "選択した目をシェーダーでコピー" --> TEX
-    TEX -- "CopyResource" --> VIEWER
+flowchart TD
+    APP["VR アプリ"] -->|"描画"| VR["SteamVR"]
+    VR <-->|"デバイス・映像"| DRV["tubane ドライバ"]
+    DRV <-->|"姿勢・入力"| SHM[("共有メモリ")]
+    DRV -->|"HMD 映像"| TEX[["共有テクスチャ"]]
+    SHM <-->|"姿勢・状態"| SB["サンドボックス"]
+    TEX -->|"HMD 映像"| SB
 ```
 
-### 姿勢と入力の流れ
+- **tubane ドライバ**（`driver_tubane.dll`）は SteamVR にロードされ、仮想の HMD・Index コントローラー・Vive トラッカーを SteamVR に見せます
+- **サンドボックス**（`tubane_sandbox.exe`）は、デバイスをマウスで動かしたりボタンを押したりする GUI です
+- 両者は **共有メモリ**（姿勢・入力・設定・接続状態）と **共有テクスチャ**（HMD の映像）でつながっています。ネットワークは使いません
+- VR アプリから見ると、実機の HMD とコントローラーが接続されているのと同じ状態になります
+
+### VR サーバー内部（ドライバ）
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as ユーザー
-    participant SB as tubane-sandbox
-    participant SHM as 共有メモリ
-    participant PT as pose thread（約 500Hz）
-    participant RF as RunFrame（フレーム毎）
-    participant VR as vrserver / アプリ
-
-    User->>SB: ギズモでデバイスをドラッグ / ボタンを押す
-    SB->>SHM: ControlBlock を書き込み（SeqLock・ハートビート +1）
-    loop 2ms 毎
-        PT->>SHM: ControlBlock を読む（ロック無し）
-        PT->>VR: TrackedDevicePoseUpdated（全デバイス）
-        PT->>SHM: DriverBlock のハートビート +1
-    end
-    loop SteamVR のフレーム毎
-        RF->>SHM: ControlBlock を読む
-        RF->>VR: UpdateBooleanComponent / UpdateScalarComponent（変化分のみ）
-    end
-    SHM-->>SB: DriverBlock（接続状態・デバイス番号）
+flowchart TD
+    SHM[("共有メモリ")] -->|"姿勢"| POSE["姿勢スレッド"]
+    SHM -->|"ボタン・軸"| CTRL
+    POSE --> HMD["仮想 HMD"]
+    POSE --> CTRL["Index ×2"]
+    POSE --> TRK["Vive Tracker ×3"]
+    COMP["コンポジタ"] -->|"左右の目"| HMD
+    HMD -->|"選択した目"| TEX[["共有テクスチャ"]]
 ```
 
-### HMD 映像の流れ
+- **姿勢スレッド** は約 500Hz で共有メモリを読み、全デバイスの位置・回転を SteamVR に通知します
+- **Index ×2** は Valve Index コントローラーとして振る舞い、ボタン・トリガー・スティック・指カールの値を SteamVR に送ります（変化した値だけ）
+- **Vive Tracker ×3** は腰・左足・右足のロールで登録されます（台数は 0〜8 で変更可）
+- **仮想 HMD** は direct mode で動作し、SteamVR の **コンポジタ** が描いた左右の目の映像を受け取ります。
+  サンドボックスで選んだ目だけを FHD / WQHD に拡大縮小して **共有テクスチャ** に書き込みます
+
+### サンドボックス内部
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant APP as VR アプリ
-    participant COMP as vrcompositor
-    participant DM as DirectModeRenderer
-    participant TEX as 共有テクスチャ
-    participant SB as tubane-sandbox
-
-    DM->>COMP: VsyncEvent（displayFrequency 毎）
-    APP->>COMP: 左右の目を Submit
-    COMP->>DM: SubmitLayer（左目・右目のスワップテクスチャ）
-    COMP->>DM: Present（sync テクスチャ）
-    DM->>DM: viewerEye を共有メモリから読む
-    DM->>TEX: AcquireSync(0, 0) → 選択した目を拡大縮小コピー → ReleaseSync
-    DM->>SB: frameIndex +1（共有メモリ経由）
-    SB->>TEX: AcquireSync(0, 0) → CopyResource → ReleaseSync
-    SB->>SB: HMD Viewer に表示
+flowchart TD
+    USER(["ユーザー"]) -->|"マウス・キー"| VP["3D ビューポート"]
+    USER -->|"クリック"| PANEL["操作パネル"]
+    VP -->|"姿勢"| LINK["IPC リンク"]
+    PANEL -->|"入力・設定"| LINK
+    LINK -->|"毎フレーム"| SHM[("共有メモリ")]
+    TEX[["共有テクスチャ"]] -->|"新フレーム"| VIEW["HMD ビューワー"]
 ```
+
+- **3D ビューポート** はルームスケールの箱の中にデバイスを表示します。クリックで選択し、ギズモで移動・回転できます
+- **操作パネル** はコントローラーのボタン・アナログ入力、数値での位置・回転編集、解像度やトラッカー数の設定を行います
+- **IPC リンク** は編集結果をまとめて毎フレーム共有メモリへ書き込みます（書き込み手はサンドボックス 1 つだけ）
+- **HMD ビューワー** は共有テクスチャに新しいフレームが来るたびにコピーして表示します。左目 / 右目の切替、等倍表示、別ウィンドウへのポップアウトができます
+
+詳しいデータ構造や同期の仕組みは [docs/ipc.md](docs/ipc.md)、設計の詳細は [docs/architecture.md](docs/architecture.md) を参照してください。
 
 | コンポーネント | 言語 / 技術 | 役割 |
 |---|---|---|
