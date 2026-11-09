@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
+#include <utility>
 
 #include "tubane/default_state.h"
 
@@ -118,16 +120,21 @@ void HelpMarker(const char* text) {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
-bool App::Init(D3D11Context* d3d) {
-    d3d_ = d3d;
+bool App::Init(D3D11Context* d3d, HWND hwnd) {
+    d3d_  = d3d;
+    hwnd_ = hwnd;
     if (!renderer_.Create(d3d->Device())) {
         return false;
     }
     ipc_.Open();  // failure is shown in the Driver panel; the UI still works offline
+    gamepad_.Init(hwnd);
+    RegisterRawMouse(hwnd);
     return true;
 }
 
 void App::Shutdown() {
+    SetKeyboardCapture(false);
+    gamepad_.Shutdown();
     ipc_.Close();
     renderer_.Destroy();
 }
@@ -139,6 +146,15 @@ void App::Frame(float dt, double now) {
     ipc_.PollDriver(now);
     SyncConfigFromDriver();
     viewer_.Update(d3d_->Device(), d3d_->Context(), ipc_.Driver(), ipc_.DriverAlive(), now);
+
+    // Physical inputs. F1 toggles keyboard/mouse capture; Esc or focus loss
+    // releases it (handled inside KeyboardMouseSource::Update).
+    gamepad_.Poll(now);
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false) && !ImGui::GetIO().WantTextInput) {
+        SetKeyboardCapture(!keyboardMouse_.Capturing());
+    }
+    keyboardMouse_.Update(hwnd_, dt);
+    SetKeyboardCapture(keyboardMouse_.Capturing());  // sync ImGui flags if Update released it
 
     ImGuizmo::BeginFrame();
 
@@ -162,8 +178,17 @@ void App::Frame(float dt, double now) {
     DrawInputPanel();
     DrawDriverPanel();
     DrawViewerPanel();
+    spaceTriggerHand_ = -1;
     DrawViewport(dt);  // last: sees this frame's edits, renders the scene
     DrawHelpWindow();
+
+    // Controller composition after all panels so UI holds, Space, gamepad and
+    // keyboard/mouse combine (runs even if the Viewport window is hidden).
+    ExternalInput gamepadInput{}, keyboardInput{};
+    gamepad_.Fill(gamepadInput);
+    keyboardMouse_.Fill(keyboardInput);
+    ComposeInput(0, spaceTriggerHand_ == 0, gamepadInput, keyboardInput);
+    ComposeInput(1, spaceTriggerHand_ == 1, gamepadInput, keyboardInput);
     if (showDemo_) ImGui::ShowDemoWindow(&showDemo_);
 
     ipc_.Publish();
@@ -228,6 +253,14 @@ void App::DrawMenuBar() {
         ImGui::EndMenu();
     }
 
+    if (keyboardMouse_.Capturing()) {
+        ImGui::SameLine(0.0f, 30.0f);
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "[KB/Mouse captured - Esc]");
+    } else if (gamepad_.Connected()) {
+        ImGui::SameLine(0.0f, 30.0f);
+        ImGui::TextDisabled("[Gamepad]");
+    }
+
     // Right-aligned connection status.
     const bool  alive = ipc_.DriverAlive();
     const char* text  = !ipc_.IsOpen() ? "IPC unavailable" : alive ? "SteamVR driver connected" : "SteamVR driver not running";
@@ -254,6 +287,10 @@ void App::DrawHelpWindow() {
         ImGui::BulletText("X: toggle world / local space");
         ImGui::BulletText("Hold Ctrl while dragging: snap");
         ImGui::BulletText("Hold Space (controller selected): pull trigger");
+        ImGui::SeparatorText("Controller input");
+        ImGui::BulletText("Gamepad (XInput / DirectInput): always active when connected");
+        ImGui::BulletText("F1: capture keyboard & mouse for the controllers, Esc: release");
+        ImGui::BulletText("Mappings: Controller Input panel");
     }
     ImGui::End();
 }
@@ -278,7 +315,11 @@ void App::DrawViewport(float dt) {
 
     renderer_.EnsureTarget(static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y));
     ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<intptr_t>(renderer_.Texture())), size);
-    const bool imageHovered = ImGui::IsItemHovered();
+    // While keyboard/mouse is captured for the controllers, the viewport
+    // ignores mouse and shortcuts entirely.
+    const bool capturing    = keyboardMouse_.Capturing();
+    const bool imageHovered = ImGui::IsItemHovered() && !capturing;
+    if (capturing) cameraDrag_ = CameraDrag::None;
 
     // --- Camera -------------------------------------------------------------
     if (cameraDrag_ == CameraDrag::None && imageHovered) {
@@ -337,7 +378,9 @@ void App::DrawViewport(float dt) {
     ImGuizmo::AllowAxisFlip(false);
     ImGuizmo::SetGizmoSizeClipSpace(0.16f);
 
-    if (selected_ >= 0 && SlotVisible(static_cast<uint32_t>(selected_))) {
+    // No gizmo while keyboard/mouse is captured: clicks there drive the
+    // controller triggers and must never move a pose.
+    if (!capturing && selected_ >= 0 && SlotVisible(static_cast<uint32_t>(selected_))) {
         ipc::DevicePose& pose = ipc_.Control().poses[selected_];
         XMFLOAT4X4 viewF, projF, model;
         XMStoreFloat4x4(&viewF, view);
@@ -389,10 +432,17 @@ void App::DrawViewport(float dt) {
     // --- Labels + render ----------------------------------------------------
     if (showLabels_) DrawLabels(viewProj, origin, size);
 
-    // Space-to-trigger and controller composition happen after the Input panel
-    // (which already ran this frame) so holds from both sources combine.
-    ComposeInput(0, spaceTrigger && selected_ == ipc::kSlotLeftHand);
-    ComposeInput(1, spaceTrigger && selected_ == ipc::kSlotRightHand);
+    if (capturing) {
+        const char*  text = "KEYBOARD / MOUSE -> CONTROLLERS   (Esc or F1 to release)";
+        const ImVec2 ts   = ImGui::CalcTextSize(text);
+        const ImVec2 pos(origin.x + (size.x - ts.x) * 0.5f, origin.y + size.y - ts.y - 16.0f);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(pos.x - 10, pos.y - 6), ImVec2(pos.x + ts.x + 10, pos.y + ts.y + 6),
+                          IM_COL32(140, 40, 40, 230), 4.0f);
+        dl->AddText(pos, IM_COL32(255, 255, 255, 255), text);
+    }
+
+    if (spaceTrigger) spaceTriggerHand_ = selected_ == ipc::kSlotLeftHand ? 0 : 1;
 
     RenderScene(view, proj);
     ImGui::End();
@@ -699,6 +749,9 @@ void App::DrawInputPanel() {
         ImGui::End();
         return;
     }
+    DrawInputDevices();
+    ImGui::Spacing();
+
     if (ImGui::BeginTabBar("hands")) {
         for (int hand = 0; hand < 2; ++hand) {
             const ImGuiTabItemFlags flags = (inputTab_ == hand) ? ImGuiTabItemFlags_SetSelected : 0;
@@ -965,6 +1018,89 @@ const char* App::SlotStatus(uint32_t slot) const {
     return "";
 }
 
+void App::SetKeyboardCapture(bool capture) {
+    keyboardMouse_.SetCaptured(hwnd_, capture);
+    ImGuiIO& io = ImGui::GetIO();
+    // While captured the UI must not react to the (hidden, pinned) mouse.
+    if (keyboardMouse_.Capturing()) {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+    } else {
+        io.ConfigFlags &= ~(ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange);
+    }
+}
+
+void App::DrawInputDevices() {
+    auto mappingTable = [](const char* id, std::initializer_list<std::pair<const char*, const char*>> rows) {
+        if (ImGui::BeginTable(id, 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            for (const auto& [from, to] : rows) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(from);
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", to);
+            }
+            ImGui::EndTable();
+        }
+    };
+
+    // --- Gamepad --------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Gamepad", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Enabled##gp", &gamepad_.enabled);
+        ImGui::SameLine();
+        if (gamepad_.Connected()) {
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "%s", gamepad_.Name().c_str());
+        } else {
+            ImGui::TextDisabled(gamepad_.enabled ? "not connected (detected when plugged in)" : "disabled");
+        }
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::SliderFloat("Stick deadzone", &gamepad_.deadzone, 0.0f, 0.5f, "%.2f");
+        if (gamepad_.Connected()) {
+            const GamepadState& s = gamepad_.State();
+            ImGui::TextDisabled("L (%+.2f %+.2f) R (%+.2f %+.2f) LT %.2f RT %.2f btn 0x%04X", s.lx, s.ly, s.rx, s.ry, s.lt,
+                                s.rt, s.buttons);
+        }
+        if (ImGui::TreeNode("Gamepad mapping")) {
+            mappingTable("gpmap", {
+                {"Left stick / Right stick", "L / R thumbstick"},
+                {"LT / RT", "L / R trigger"},
+                {"LB / RB", "L / R grip"},
+                {"X / Y", "Left A / B"},
+                {"A / B", "Right A / B"},
+                {"L3 / R3", "L / R thumbstick click"},
+                {"Back / Start", "L / R system"},
+                {"D-pad", "Left trackpad"},
+            });
+            ImGui::TextDisabled("DirectInput pads use the common layout\n(□/X=West ×/A=South ○/B=East △/Y=North).");
+            ImGui::TreePop();
+        }
+    }
+
+    // --- Keyboard & mouse -------------------------------------------------------
+    if (ImGui::CollapsingHeader("Keyboard & Mouse", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (keyboardMouse_.Capturing()) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Capturing - Esc or F1 to release");
+        } else if (ImGui::Button("Start capture (F1)")) {
+            SetKeyboardCapture(true);
+        }
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::SliderFloat("Mouse sensitivity", &keyboardMouse_.sensitivity, 0.1f, 5.0f, "%.1f");
+        if (ImGui::TreeNode("Keyboard & mouse mapping")) {
+            mappingTable("kmmap", {
+                {"W A S D", "Left thumbstick"},
+                {"Mouse move / Arrow keys", "Right thumbstick"},
+                {"Right click / Left click", "L / R trigger"},
+                {"Q / E", "L / R grip"},
+                {"Z / X", "Left A / B"},
+                {"Space / F", "Right A / B"},
+                {"Left Ctrl / Middle click", "L / R thumbstick click"},
+                {"Tab / Enter", "L / R system"},
+            });
+            ImGui::TreePop();
+        }
+        ImGui::TextDisabled("Poses (6DoF) are never moved by these inputs.");
+    }
+}
+
 void App::BumpConfigRevision() {
     ++ipc_.Control().config.revision;
 }
@@ -983,39 +1119,60 @@ void App::SyncConfigFromDriver() {
     }
 }
 
-void App::ComposeInput(int hand, bool forceTrigger) {
+void App::ComposeInput(int hand, bool forceTrigger, const ExternalInput& gamepad, const ExternalInput& keyboard) {
     ControllerUiState&    ui = controllerUi_[hand];
     ipc::ControllerInput  in{};
 
+    // 1) Manual UI
     for (int b = 0; b < ControllerUiState::kButtonCount; ++b) {
         const bool click = kButtons[b].clickBit && (ui.latchClick[b] || ui.hold[b]);
-        const bool touch = ui.latchTouch[b] || click || (!kButtons[b].clickBit && ui.hold[b]);
+        const bool touch = ui.latchTouch[b] || (!kButtons[b].clickBit && ui.hold[b]);
         if (click) in.buttons |= kButtons[b].clickBit;
         if (touch) in.buttons |= kButtons[b].touchBit;
     }
-
-    const bool triggerHeld = forceTrigger || ui.hold[kBtnIndexTrigger];
-    in.trigger = triggerHeld ? 1.0f : ui.trigger;
-    if (in.trigger >= 0.95f) in.buttons |= ipc::kBtnTriggerClick;
-    if (in.trigger > 0.01f) in.buttons |= ipc::kBtnTriggerTouch;
-
+    in.trigger       = (forceTrigger || ui.hold[kBtnIndexTrigger]) ? 1.0f : ui.trigger;
     const bool gripHeld = ui.hold[kBtnIndexGrip];
-    in.gripValue = gripHeld ? 1.0f : ui.gripValue;
-    in.gripForce = gripHeld ? std::max(ui.gripForce, 0.5f) : ui.gripForce;
-    if (in.gripValue > 0.01f) in.buttons |= ipc::kBtnGripTouch;
-
-    in.thumbstickX = ui.stick[0];
-    in.thumbstickY = ui.stick[1];
-    if (std::fabs(ui.stick[0]) > 0.01f || std::fabs(ui.stick[1]) > 0.01f) in.buttons |= ipc::kBtnThumbstickTouch;
-
+    in.gripValue     = gripHeld ? 1.0f : ui.gripValue;
+    in.gripForce     = gripHeld ? std::max(ui.gripForce, 0.5f) : ui.gripForce;
+    in.thumbstickX   = ui.stick[0];
+    in.thumbstickY   = ui.stick[1];
     in.trackpadX     = ui.pad[0];
     in.trackpadY     = ui.pad[1];
     in.trackpadForce = ui.padForce;
-    if (std::fabs(ui.pad[0]) > 0.01f || std::fabs(ui.pad[1]) > 0.01f || ui.padForce > 0.0f) {
-        in.buttons |= ipc::kBtnTrackpadTouch;
-    }
     (void)kBtnIndexStick;
     (void)kBtnIndexPad;
+
+    // 2) Gamepad + keyboard/mouse: buttons OR'ed, analog values take whichever
+    //    source is deflected furthest.
+    auto stronger = [](float a, float b) { return std::fabs(b) > std::fabs(a) ? b : a; };
+    for (const ExternalInput* ext : {&gamepad, &keyboard}) {
+        const ipc::ControllerInput& e = ext->hand[hand];
+        in.buttons      |= e.buttons;
+        in.trigger       = stronger(in.trigger, e.trigger);
+        in.gripValue     = stronger(in.gripValue, e.gripValue);
+        in.gripForce     = stronger(in.gripForce, e.gripForce);
+        in.trackpadForce = stronger(in.trackpadForce, e.trackpadForce);
+        if (std::fabs(e.thumbstickX) + std::fabs(e.thumbstickY) > std::fabs(in.thumbstickX) + std::fabs(in.thumbstickY)) {
+            in.thumbstickX = e.thumbstickX;
+            in.thumbstickY = e.thumbstickY;
+        }
+        if (std::fabs(e.trackpadX) + std::fabs(e.trackpadY) > std::fabs(in.trackpadX) + std::fabs(in.trackpadY)) {
+            in.trackpadX = e.trackpadX;
+            in.trackpadY = e.trackpadY;
+        }
+    }
+
+    // 3) Derived touch / click bits (a pressed button is also touched).
+    for (const ButtonDef& def : kButtons) {
+        if (def.clickBit && (in.buttons & def.clickBit)) in.buttons |= def.touchBit;
+    }
+    if (in.trigger >= 0.95f) in.buttons |= ipc::kBtnTriggerClick | ipc::kBtnTriggerTouch;
+    if (in.trigger > 0.01f) in.buttons |= ipc::kBtnTriggerTouch;
+    if (in.gripValue > 0.01f) in.buttons |= ipc::kBtnGripTouch;
+    if (std::fabs(in.thumbstickX) > 0.01f || std::fabs(in.thumbstickY) > 0.01f) in.buttons |= ipc::kBtnThumbstickTouch;
+    if (std::fabs(in.trackpadX) > 0.01f || std::fabs(in.trackpadY) > 0.01f || in.trackpadForce > 0.0f) {
+        in.buttons |= ipc::kBtnTrackpadTouch;
+    }
 
     if (ui.autoFingers) {
         in.finger[0] = in.trigger;

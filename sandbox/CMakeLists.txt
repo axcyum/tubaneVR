@@ -9,6 +9,8 @@ add_executable(tubane_sandbox WIN32
     src/d3d11_context.h
     src/hmd_viewer.cpp
     src/hmd_viewer.h
+    src/input_devices.cpp
+    src/input_devices.h
     src/ipc_link.cpp
     src/ipc_link.h
     src/renderer.cpp
@@ -17,7 +19,8 @@ add_executable(tubane_sandbox WIN32
     src/scene.h
     src/math_util.h)
 
-target_link_libraries(tubane_sandbox PRIVATE tubane::common tubane::imgui tubane::imguizmo)
+target_link_libraries(tubane_sandbox PRIVATE tubane::common tubane::imgui tubane::imguizmo
+    xinput dinput8 dxguid)
 
 if(MSVC)
     target_compile_options(tubane_sandbox PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)

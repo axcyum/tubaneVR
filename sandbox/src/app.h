@@ -9,6 +9,7 @@
 #include "camera.h"
 #include "d3d11_context.h"
 #include "hmd_viewer.h"
+#include "input_devices.h"
 #include "ipc_link.h"
 #include "math_util.h"
 #include "renderer.h"
@@ -37,8 +38,13 @@ struct ControllerUiState {
 
 class App {
 public:
-    bool Init(D3D11Context* d3d);
+    bool Init(D3D11Context* d3d, HWND hwnd);
     void Shutdown();
+
+    // Forwarded from WM_INPUT (relative mouse motion).
+    void OnRawMouseMove(long dx, long dy) { keyboardMouse_.OnRawMouseMove(dx, dy); }
+    // Forwarded from WM_DEVICECHANGE (a gamepad may have been plugged in).
+    void OnDeviceChange() { gamepad_.RequestRescan(); }
 
     // Builds the UI, renders the 3D viewport and publishes to shared memory.
     void Frame(float dt, double nowSeconds);
@@ -69,7 +75,9 @@ private:
     uint32_t VisibleTrackerCount() const;
     bool     SlotVisible(uint32_t slot) const;
     const char* SlotStatus(uint32_t slot) const;  // "", "(after restart)", ...
-    void     ComposeInput(int hand, bool forceTrigger);
+    void     ComposeInput(int hand, bool forceTrigger, const ExternalInput& gamepad, const ExternalInput& keyboard);
+    void     DrawInputDevices();
+    void     SetKeyboardCapture(bool capture);
     void     BumpConfigRevision();
     void     SyncConfigFromDriver();
 
@@ -78,6 +86,11 @@ private:
     Camera        camera_;
     IpcLink       ipc_;
     HmdViewer     viewer_;
+    HWND          hwnd_ = nullptr;
+
+    // Physical input -> controller buttons / sticks (never poses).
+    GamepadSource       gamepad_;
+    KeyboardMouseSource keyboardMouse_;
 
     // HMD Viewer panel
     bool viewerNativeSize_ = false;  // 1:1 pixels instead of fit-to-panel
@@ -103,6 +116,7 @@ private:
 
     ControllerUiState controllerUi_[2];
     int  inputTab_ = 0;          // requested Input tab (-1 = leave as is)
+    int  spaceTriggerHand_ = -1; // hand whose trigger Space pulls this frame (-1 = none)
 
     // Euler cache for the inspector so editing does not jump at gimbal lock.
     int               eulerSlot_ = -1;

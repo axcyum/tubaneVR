@@ -16,6 +16,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace {
 
 tubane::sandbox::D3D11Context g_d3d;
+tubane::sandbox::App*         g_app = nullptr;
 UINT g_resizeWidth = 0, g_resizeHeight = 0;
 
 LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -23,6 +24,20 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     switch (msg) {
+        case WM_INPUT: {
+            // Relative mouse motion for keyboard/mouse controller capture.
+            RAWINPUT raw{};
+            UINT     size = sizeof(raw);
+            if (g_app && GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, &raw, &size,
+                                         sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1) &&
+                raw.header.dwType == RIM_TYPEMOUSE && !(raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+                g_app->OnRawMouseMove(raw.data.mouse.lLastX, raw.data.mouse.lLastY);
+            }
+            break;  // DefWindowProc must still run for WM_INPUT
+        }
+        case WM_DEVICECHANGE:
+            if (g_app) g_app->OnDeviceChange();
+            break;
         case WM_SIZE:
             if (wParam != SIZE_MINIMIZED) {
                 g_resizeWidth  = LOWORD(lParam);
@@ -131,7 +146,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCmd) {
     ImGui_ImplDX11_Init(g_d3d.Device(), g_d3d.Context());
 
     tubane::sandbox::App app;
-    if (!app.Init(&g_d3d)) {
+    g_app = &app;
+    if (!app.Init(&g_d3d, hwnd)) {
         MessageBoxW(nullptr, L"Failed to initialize the renderer (shader compilation).", L"tubane sandbox", MB_ICONERROR);
         return 1;
     }
@@ -180,6 +196,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCmd) {
     }
 
     app.Shutdown();
+    g_app = nullptr;
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
