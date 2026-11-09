@@ -6,7 +6,7 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
 それらの位置・姿勢・ボタン入力を PC 上の 3D サンドボックス GUI からマウス / キーボードで自由に操作できるようにします。
 
 > **現在の進捗: Step 3（HMD 映像出力ビューワー）完了**
-> 残りの課題（骨格入力・速度の算出など）は [ロードマップ](#ロードマップ) を参照してください。
+> 残りの課題は [ロードマップ](#ロードマップ) を参照してください。
 
 ---
 
@@ -256,7 +256,7 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 | **Viewport** | ルームスケールの箱とデバイスを 3D 表示。クリックで選択し、ギズモで移動・回転 |
 | **Devices** | デバイス一覧。ダブルクリックでカメラを寄せる。`#n` は SteamVR 上のデバイス番号 |
 | **Inspector** | 位置・回転を数値で編集。`Connected` / `Tracking valid` で切断やトラッキングロストを再現 |
-| **Controller Input** | Index コントローラーのボタン・トリガー・グリップ・スティック・指カール。ゲームパッドとキーボード＋マウスの設定 |
+| **Controller Input** | Index コントローラーのボタン・トリガー・グリップ・スティック、指（ハンドジェスチャーのプリセット付き）。ゲームパッドとキーボード＋マウスの設定 |
 | **Driver / Settings** | 接続状態、解像度（FHD / WQHD）、トラッカー数（0〜8）、使用 GPU |
 | **HMD Viewer** | 仮想 HMD の映像。左目 / 右目の切替、等倍表示、別ウィンドウ化 |
 
@@ -371,7 +371,9 @@ SteamVR が仮想 HMD に描画した映像を、GPU 上の共有テクスチャ
 - デバイスを動かすと、その動きから速度・角速度を計算して送ります（SteamVR の姿勢予測や、ゲーム内で物を投げる動作に使われます）。
   Driver / Settings パネルの `Send velocities` で OFF にできます
 - SteamVR のダッシュボードが開いている間は、ゲームにコントローラー入力が届きません（左手のシステムボタン / キャプチャ中の `Tab` で開閉）
-- 骨格入力（Skeletal Input）は未実装です。指カールの値は `/input/finger/*` に送られます
+- 指の曲がり具合は、手の骨格（Skeletal Input）として SteamVR に送られ、VRChat などのハンドジェスチャーやフィンガートラッキングに反映されます。
+  Controller Input パネルの `Open` / `Fist` / `Point` / `Victory` / `Rock'n'roll` / `Hand gun` / `Thumbs up` でジェスチャーを一発で作れます
+- 親指は実機の Index と同じく、A / B / スティック / トラックパッドに触れると曲がり、押すと握ります。`Thumb override` で直接指定もできます
 
 ---
 
@@ -390,6 +392,8 @@ build\vs2026\tools\vr_check\Release\tubane_vr_check.exe motion   # 速度・角�
 | `input` | 左右のコントローラーに A / B / トリガー / グリップ / スティック / トラックパッドの入力を書き込み、SteamVR の入力 API（IVRInput）で同じ値が読めるか |
 | `velocity` | SteamVR が速度・角速度をどの座標系で解釈するか（線速度 = ワールド、角速度 = デバイスのローカル） |
 | `motion` | サンドボックスと同じ速度推定で HMD を動かし、SteamVR がワールド座標で正しい速度・角速度を返すか |
+| `skeleton` | 指の曲がり具合（開く・握る・指差し・半分・親指の上書き）を書き込み、SteamVR が手の骨格から計算した各指の曲がり具合と一致するか |
+| `skeleton-dump <out.h>` | SteamVR から手の基準ポーズを取得し、`driver/src/hand_reference_poses.h` を作り直す（通常は不要） |
 
 - 実行中はツールが共有メモリへの書き込み手になるため、**tubane-sandbox を閉じてから** 実行してください。終了時に元の状態へ戻します
 - `input` は実行中だけ SteamVR のシーンアプリになります。**ダッシュボードが開いていると失敗する** ので、閉じてから実行してください（`vrcmd --hidedashboard`）
@@ -477,7 +481,7 @@ tubane_shm_probe trigger right 1
 | Scalar（0〜1） | `/input/trigger/value`, `/input/grip/value`, `/input/grip/force`, `/input/trackpad/force`, `/input/finger/index`, `/input/finger/middle`, `/input/finger/ring`, `/input/finger/pinky` |
 | Scalar（-1〜1） | `/input/thumbstick/x`, `/input/thumbstick/y`, `/input/trackpad/x`, `/input/trackpad/y` |
 | Haptic | `/output/haptic`（受信のみ。振動は無視） |
-| Skeleton | 未実装（Step 2 / 3 で `CreateSkeletonComponent` を追加予定） |
+| Skeleton | `/input/skeleton/left` / `right`（31 ボーン、Partial トラッキング）。SteamVR の「開いた手」と「握った手」の基準ポーズを指ごとに補間 |
 
 ---
 
@@ -540,7 +544,7 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
 - [ ] **今後の課題**
   - [ ] ゲームパッド / キーボードの割り当て変更 UI
   - [ ] FBX / BVH などのモーションデータ、Unity の Humanoid マッスルカーブからの頭の姿勢の算出
-  - [ ] 骨格入力（Skeletal Input）
+  - [x] 骨格入力（Skeletal Input）とハンドジェスチャーのプリセット
   - [x] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
   - [x] SteamVR を通した入力・速度の自動検証（`tubane_vr_check`）
   - [ ] ハプティクスの表示

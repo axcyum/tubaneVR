@@ -11,7 +11,9 @@
     { "name": "/actions/check/in/thumbstick",      "type": "vector2" },
     { "name": "/actions/check/in/thumbstick_click","type": "boolean" },
     { "name": "/actions/check/in/trackpad",        "type": "vector2" },
-    { "name": "/actions/check/in/trackpad_touch",  "type": "boolean" }
+    { "name": "/actions/check/in/trackpad_touch",  "type": "boolean" },
+    { "name": "/actions/check/in/skeleton_left",   "type": "skeleton", "skeleton": "/skeleton/hand/left" },
+    { "name": "/actions/check/in/skeleton_right",  "type": "skeleton", "skeleton": "/skeleton/hand/right" }
   ],
   "action_sets": [
     { "name": "/actions/check", "usage": "leftright" }
@@ -28,7 +30,9 @@
       "/actions/check/in/thumbstick": "Thumbstick",
       "/actions/check/in/thumbstick_click": "Thumbstick click",
       "/actions/check/in/trackpad": "Trackpad",
-      "/actions/check/in/trackpad_touch": "Trackpad touch"
+      "/actions/check/in/trackpad_touch": "Trackpad touch",
+      "/actions/check/in/skeleton_left": "Left hand skeleton",
+      "/actions/check/in/skeleton_right": "Right hand skeleton"
     }
   ]
 }

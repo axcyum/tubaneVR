@@ -108,7 +108,11 @@ SharedState
 | `thumbstickX` / `Y` | float | -1〜1 | `/input/thumbstick/x` / `y` |
 | `trackpadX` / `Y` | float | -1〜1 | `/input/trackpad/x` / `y` |
 | `trackpadForce` | float | 0〜1 | `/input/trackpad/force` |
-| `finger[4]` | float | 0〜1 | `/input/finger/index` / `middle` / `ring` / `pinky` |
+| `finger[4]` | float | 0〜1 | `/input/finger/index` / `middle` / `ring` / `pinky`、および手の骨格（`/input/skeleton/*`）の各指 |
+| `thumbCurl` | float | 0〜1 | 親指の曲がり具合。`fingerFlags` に `kFingerThumbOverride` があるときだけ使用 |
+| `fingerFlags` | uint32 | ビット | `kFingerThumbOverride`(1)：親指を `thumbCurl` で指定。0 のときは、親指で触れる操作部（A / B / システム / スティック / トラックパッド）のタッチで 0.7、押下で 1.0 |
+
+`thumbCurl` / `fingerFlags` は以前の `reserved` 領域を使っているため、レイアウトと `kProtocolVersion` は変わりません（ゼロ初期化 = 自動）。
 
 | ビット | 定数 | 入力パス |
 |---|---|---|

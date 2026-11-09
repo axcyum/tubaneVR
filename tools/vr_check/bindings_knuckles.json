@@ -4,6 +4,10 @@
   "name": "tubane_vr_check",
   "bindings": {
     "/actions/check": {
+      "skeleton": [
+        { "output": "/actions/check/in/skeleton_left",  "path": "/user/hand/left/input/skeleton/left" },
+        { "output": "/actions/check/in/skeleton_right", "path": "/user/hand/right/input/skeleton/right" }
+      ],
       "sources": [
         { "path": "/user/hand/left/input/a",  "mode": "button", "inputs": { "click": { "output": "/actions/check/in/a" } } },
         { "path": "/user/hand/right/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/check/in/a" } } },

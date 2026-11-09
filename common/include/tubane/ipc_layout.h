@@ -98,8 +98,19 @@ struct ControllerInput {
     float    trackpadX;      // -1..1
     float    trackpadY;      // -1..1
     float    trackpadForce;  // 0..1
-    float    finger[4];      // index, middle, ring, pinky curl 0..1
-    uint32_t reserved[3];
+    float    finger[4];      // index, middle, ring, pinky curl 0..1 (drive the hand skeleton)
+    float    thumbCurl;      // 0..1, used only with kFingerThumbOverride
+    uint32_t fingerFlags;    // FingerFlags
+    uint32_t reserved[1];
+};
+
+// The Index controller has no thumb curl sensor: by default the driver curls
+// the thumb when it touches A/B/system/thumbstick/trackpad (fully on press).
+// kFingerThumbOverride uses ControllerInput::thumbCurl instead (gestures such
+// as thumbs-up / hand-gun). Fits in the former reserved words: layout and
+// kProtocolVersion are unchanged, and zero-initialized data means "auto".
+enum FingerFlags : uint32_t {
+    kFingerThumbOverride = 1u << 0,
 };
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,8 @@ struct ControllerUiState {
     float padForce    = 0.0f;
     float fingers[4]  = {};
     bool  autoFingers = true;  // index follows trigger, others follow grip
+    bool  thumbOverride = false;  // false = thumb follows thumb-control touches (driver)
+    float thumb = 0.0f;
 };
 
 class App {

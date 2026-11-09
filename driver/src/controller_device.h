@@ -32,6 +32,7 @@ private:
     };
 
     void CreateInputComponents(vr::PropertyContainerHandle_t container);
+    void UpdateSkeleton(const ipc::ControllerInput& input);
 
     const Hand hand_;
 
@@ -39,6 +40,7 @@ private:
     int                          boolCount_ = 0;
     vr::VRInputComponentHandle_t scalars_[kScalarCount]{};
     vr::VRInputComponentHandle_t haptic_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t skeleton_ = vr::k_ulInvalidInputComponentHandle;
 
     // Last values sent to SteamVR; only changes are forwarded.
     ipc::ControllerInput last_{};

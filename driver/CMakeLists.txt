@@ -20,6 +20,9 @@ add_library(driver_tubane SHARED
     src/driver_ipc.h
     src/controller_device.cpp
     src/controller_device.h
+    src/hand_skeleton.cpp
+    src/hand_skeleton.h
+    src/hand_reference_poses.h
     src/tracker_device.cpp
     src/tracker_device.h
     src/settings.cpp

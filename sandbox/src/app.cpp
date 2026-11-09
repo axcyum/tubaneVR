@@ -834,21 +834,42 @@ void App::DrawInputPanel() {
             ImGui::Text("%+.2f %+.2f", ui.pad[0], ui.pad[1]);
             ImGui::EndGroup();
 
-            ImGui::SeparatorText("Finger curl");
+            ImGui::SeparatorText("Fingers (hand skeleton)");
+
+            // Gesture presets (VRChat gesture names). They switch to manual curls.
+            struct Gesture { const char* name; float thumb, index, middle, ring, pinky; };
+            static constexpr Gesture kGestures[] = {
+                {"Open", 0, 0, 0, 0, 0},       {"Fist", 1, 1, 1, 1, 1},     {"Point", 1, 0, 1, 1, 1},
+                {"Victory", 1, 0, 0, 1, 1},    {"Rock'n'roll", 1, 0, 1, 1, 0}, {"Hand gun", 0, 0, 1, 1, 1},
+                {"Thumbs up", 0, 1, 1, 1, 1},
+            };
+            for (size_t g = 0; g < std::size(kGestures); ++g) {
+                if (g % 4 != 0) ImGui::SameLine();
+                if (ImGui::Button(kGestures[g].name)) {
+                    const Gesture& gs = kGestures[g];
+                    ui.autoFingers   = false;
+                    ui.thumbOverride = true;
+                    ui.thumb         = gs.thumb;
+                    ui.fingers[0] = gs.index;
+                    ui.fingers[1] = gs.middle;
+                    ui.fingers[2] = gs.ring;
+                    ui.fingers[3] = gs.pinky;
+                }
+            }
+
             ImGui::Checkbox("Auto (index = trigger, others = grip)", &ui.autoFingers);
             ImGui::BeginDisabled(ui.autoFingers);
             const char* fingerNames[4] = {"Index", "Middle", "Ring", "Pinky"};
             for (int f = 0; f < 4; ++f) ImGui::SliderFloat(fingerNames[f], &ui.fingers[f], 0.0f, 1.0f, "%.2f");
-            if (ImGui::Button("Open hand")) std::fill(std::begin(ui.fingers), std::end(ui.fingers), 0.0f);
-            ImGui::SameLine();
-            if (ImGui::Button("Fist")) std::fill(std::begin(ui.fingers), std::end(ui.fingers), 1.0f);
-            ImGui::SameLine();
-            if (ImGui::Button("Point")) {
-                ui.fingers[0] = 0.0f;
-                ui.fingers[1] = ui.fingers[2] = ui.fingers[3] = 1.0f;
-            }
             ImGui::EndDisabled();
-            ImGui::TextDisabled("Skeletal input is not implemented yet; curls go to /input/finger/*.");
+
+            ImGui::Checkbox("Thumb override", &ui.thumbOverride);
+            HelpMarker("Off: like a real Index controller, the thumb curls when it touches A / B / thumbstick / "
+                       "trackpad and closes fully when one is pressed.\nOn: the thumb uses the slider below.");
+            ImGui::BeginDisabled(!ui.thumbOverride);
+            ImGui::SliderFloat("Thumb", &ui.thumb, 0.0f, 1.0f, "%.2f");
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("Drives /input/skeleton (finger tracking, hand gestures) and /input/finger/*.");
 
             ImGui::SeparatorText("Sent to driver");
             const ipc::ControllerInput& in = ipc_.Control().controllers[hand];
@@ -1535,6 +1556,10 @@ void App::ComposeInput(int hand, bool forceTrigger, const ExternalInput& gamepad
         in.finger[1] = in.finger[2] = in.finger[3] = in.gripValue;
     } else {
         std::copy(std::begin(ui.fingers), std::end(ui.fingers), in.finger);
+    }
+    if (ui.thumbOverride) {
+        in.thumbCurl = ui.thumb;
+        in.fingerFlags |= ipc::kFingerThumbOverride;
     }
 
     ipc_.Control().controllers[hand] = in;

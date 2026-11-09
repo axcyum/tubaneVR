@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include "driver_log.h"
+#include "hand_skeleton.h"
 
 namespace tubane::driver {
 
@@ -83,9 +84,17 @@ void ControllerDevice::CreateInputComponents(vr::PropertyContainerHandle_t conta
 
     input->CreateHapticComponent(container, "/output/haptic", &haptic_);
 
-    // TODO(Step 2/3): skeletal input via CreateSkeletonComponent
-    // ("/input/skeleton/left|right", "/skeleton/hand/left|right") once the
-    // sandbox can author finger curls -> bone transforms.
+    // Skeletal input (31-bone OpenVR hand). Index controllers report
+    // "partial" tracking: finger curls are measured, not full joint angles.
+    const bool left = hand_ == Hand::Left;
+    const vr::EVRInputError err = input->CreateSkeletonComponent(
+        container, left ? "/input/skeleton/left" : "/input/skeleton/right",
+        left ? "/skeleton/hand/left" : "/skeleton/hand/right", "/pose/raw", vr::VRSkeletalTracking_Partial, nullptr, 0,
+        &skeleton_);
+    if (err != vr::VRInputError_None) {
+        Log("CreateSkeletonComponent failed for %s (%d)", Serial().c_str(), static_cast<int>(err));
+        skeleton_ = vr::k_ulInvalidInputComponentHandle;
+    }
 
     hasLast_ = false;
 }
@@ -124,6 +133,34 @@ void ControllerDevice::UpdateInput(const ipc::ControllerInput& in) {
 
     last_    = in;
     hasLast_ = true;
+
+    UpdateSkeleton(in);
+}
+
+void ControllerDevice::UpdateSkeleton(const ipc::ControllerInput& in) {
+    if (skeleton_ == vr::k_ulInvalidInputComponentHandle) return;
+
+    // Index finger curls come straight from the sandbox. The Index controller
+    // has no thumb curl sensor; like the real driver, the thumb curls when it
+    // rests on a thumb control and closes fully when that control is pressed.
+    constexpr uint32_t kThumbTouch = ipc::kBtnATouch | ipc::kBtnBTouch | ipc::kBtnSystemTouch |
+                                     ipc::kBtnThumbstickTouch | ipc::kBtnTrackpadTouch;
+    constexpr uint32_t kThumbPress = ipc::kBtnAClick | ipc::kBtnBClick | ipc::kBtnSystemClick | ipc::kBtnThumbstickClick;
+    FingerCurls curls;
+    curls.thumb  = (in.fingerFlags & ipc::kFingerThumbOverride) ? in.thumbCurl
+                   : (in.buttons & kThumbPress)                 ? 1.0f
+                   : (in.buttons & kThumbTouch)                 ? 0.7f
+                                                                : 0.0f;
+    curls.index  = in.finger[0];
+    curls.middle = in.finger[1];
+    curls.ring   = in.finger[2];
+    curls.pinky  = in.finger[3];
+
+    vr::VRBoneTransform_t bones[kHandBoneCount];
+    ComputeHandSkeleton(hand_ == Hand::Left, curls, bones);
+    auto* input = vr::VRDriverInput();
+    input->UpdateSkeletonComponent(skeleton_, vr::VRSkeletalMotionRange_WithController, bones, kHandBoneCount);
+    input->UpdateSkeletonComponent(skeleton_, vr::VRSkeletalMotionRange_WithoutController, bones, kHandBoneCount);
 }
 
 void ControllerDevice::Deactivate() {
