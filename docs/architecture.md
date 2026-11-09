@@ -141,6 +141,40 @@ OpenVR SDK の `driver_sample`（null driver）と同じ方式です。レンズ
   SteamVR はセッション中のサイズ変更に追従しないため、FHD / WQHD の切替は SteamVR 再起動で反映されます。
   ビューワーウィンドウの拡大縮小は即時に反映できます
 
+### 3.5 サンドボックス（tubane-sandbox）
+
+```
+sandbox/src/
+  main.cpp          Win32 ウィンドウ + D3D11 + ImGui のメインループ（vsync 同期）
+  app.*             App: パネル UI / ビューポート / ギズモ / ピッキング / 入力の合成
+  renderer.*        Renderer: オフスクリーン 4x MSAA → resolve → ImGui::Image
+  camera.*          Camera: フリーカメラ
+  scene.*           デバイスの静的な情報（名前・色・ボックスモデル・ピック範囲）
+  ipc_link.*        IpcLink: ControlBlock の単一ライター + DriverBlock の監視
+```
+
+#### 1 フレームの流れ
+
+```
+PollDriver()            DriverBlock を読み、ハートビートの変化で接続状態を判定（1 秒止まったら切断扱い）
+SyncConfigFromDriver()  ドライバが新しく接続したら、実行中の解像度 / トラッカー数を UI に取り込む
+ImGuizmo::BeginFrame()
+パネル描画              Devices / Inspector / Controller Input / Driver / HMD Viewer
+                        → IpcLink::Control()（姿勢・入力・設定）を直接編集する
+DrawViewport()          カメラ操作 → ギズモ (Manipulate) → ピッキング → ラベル
+                        → ComposeInput()（UI 状態 → ControllerInput）→ RenderScene()
+Publish()               ControlBlock を SeqLock で共有メモリへ書き込み（ハートビート +1）
+```
+
+- **唯一の正となるデータはサンドボックスが持つ `ControlBlock` のコピー**です。UI はこれを直接編集し、毎フレーム丸ごと共有メモリへ書き込みます。
+  起動時は共有メモリに残っている値（ドライバが作成した初期値や、前回のサンドボックスが残した姿勢）を読み込んでから始めます
+- 3D シーンはオフスクリーンのテクスチャに描画し、Docking 可能な `Viewport` ウィンドウに `ImGui::Image` として表示します。
+  ImGuizmo はそのウィンドウの描画リストと矩形に対して描画します
+- 行列は DirectXMath の右手系関数（`XMMatrixLookToRH` / `XMMatrixPerspectiveFovRH`）で作り、OpenVR の座標系のまま描画します。
+  DirectXMath の行列（行優先・行ベクトル）はメモリ配置が ImGuizmo の期待する形式と同じなので、変換せずに渡せます
+- ピッキングは、マウス位置から作ったレイと各デバイスの OBB（ピック範囲を少し拡大したもの）の交差判定です
+- HLSL は外部ファイルを持たず、起動時に `D3DCompile` でコンパイルします（exe 単体で動作させるため）
+
 ---
 
 ## 4. 座標系
@@ -173,6 +207,6 @@ OpenVR SDK の `driver_sample`（null driver）と同じ方式です。レンズ
 |---|---|
 | 骨格入力 | 未実装。指カールの値（`/input/finger/*`）だけを送っている。Step 2 / 3 で `CreateSkeletonComponent` と骨格の生成処理を追加する |
 | ハプティクス | イベントは受信しているが無視している。サンドボックスに振動インジケーターとして表示する予定 |
-| 速度・角速度 | 共有メモリに項目はあるが、サンドボックスがまだ計算していない。コンポジタの予測精度向上のため、Step 2 で差分から算出する |
+| 速度・角速度 | 共有メモリに項目はあるが、サンドボックスは 0 を送っている。値を入れると SteamVR が姿勢を先読み予測するため、角速度の座標系（ワールド / ローカル）を検証してから Step 3 で有効にする |
 | 権限 | 共有メモリは既定の DACL で作成される。SteamVR を管理者権限で起動すると、通常権限のサンドボックスからアクセスできない |
 | 複数 GPU | Step 3 の共有テクスチャは同一アダプタ前提。ハイブリッド GPU のノート PC では、両プロセスを同じ GPU に割り当てる必要がある |

@@ -72,6 +72,13 @@ void PrintState(const SharedState& s) {
                     SlotName(i), id == 0xFFFFFFFFu ? "-" : std::to_string(id).c_str(), p.position[0], p.position[1],
                     p.position[2], p.rotation[0], p.rotation[1], p.rotation[2], p.rotation[3], p.flags);
     }
+    for (int hand = 0; hand < 2; ++hand) {
+        const ControllerInput& in = c.controllers[hand];
+        std::printf("  [%s input] buttons=0x%03X trigger=%.2f grip=%.2f/%.2f stick=(%+.2f %+.2f) pad=(%+.2f %+.2f f%.2f) "
+                    "fingers=(%.2f %.2f %.2f %.2f)\n",
+                    hand ? "R" : "L", in.buttons, in.trigger, in.gripValue, in.gripForce, in.thumbstickX, in.thumbstickY,
+                    in.trackpadX, in.trackpadY, in.trackpadForce, in.finger[0], in.finger[1], in.finger[2], in.finger[3]);
+    }
 }
 
 void SetYaw(DevicePose& p, double yawRad) {

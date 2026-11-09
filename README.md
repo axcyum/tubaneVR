@@ -5,8 +5,8 @@
 SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC Vive Tracker（初期値 3 台）を認識させ、
 それらの位置・姿勢・ボタン入力を PC 上の 3D サンドボックス GUI からマウス / キーボードで自由に操作できるようにします。
 
-> **現在の進捗: Step 1（ドライバのスケルトン + 共有メモリ定義）完了**
-> サンドボックス GUI（Step 2）、映像出力ビューワー（Step 3）は未実装です。詳細は [ロードマップ](#ロードマップ) を参照してください。
+> **現在の進捗: Step 2（3D サンドボックス GUI）完了**
+> HMD 映像出力ビューワー（Step 3）は未実装です。詳細は [ロードマップ](#ロードマップ) を参照してください。
 
 ---
 
@@ -17,14 +17,15 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
 3. [ディレクトリ構成](#ディレクトリ構成)
 4. [ビルド方法](#ビルド方法)
 5. [SteamVR への登録](#steamvr-への登録)
-6. [動作確認（Step 1）](#動作確認step-1)
-7. [tubane_shm_probe の使い方](#tubane_shm_probe-の使い方)
-8. [設定項目 (default.vrsettings)](#設定項目-defaultvrsettings)
-9. [仮想デバイス一覧](#仮想デバイス一覧)
-10. [座標系](#座標系)
-11. [トラブルシューティング](#トラブルシューティング)
-12. [ロードマップ](#ロードマップ)
-13. [関連ドキュメント](#関連ドキュメント)
+6. [動作確認](#動作確認)
+7. [tubane-sandbox の使い方](#tubane-sandbox-の使い方)
+8. [tubane_shm_probe の使い方](#tubane_shm_probe-の使い方)
+9. [設定項目 (default.vrsettings)](#設定項目-defaultvrsettings)
+10. [仮想デバイス一覧](#仮想デバイス一覧)
+11. [座標系](#座標系)
+12. [トラブルシューティング](#トラブルシューティング)
+13. [ロードマップ](#ロードマップ)
+14. [関連ドキュメント](#関連ドキュメント)
 
 ---
 
@@ -42,7 +43,7 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
                                │  (SeqLock で保護された固定長構造体)
                                │  + Step3: D3D11 共有テクスチャ (NT ハンドル)
 ┌──────────────────────────────┴──────────────────────────────────────────┐
-│  tubane-sandbox (Step 2)  C++ / D3D11 / Dear ImGui / ImGuizmo           │
+│  tubane-sandbox           C++ / D3D11 / Dear ImGui / ImGuizmo           │
 │    3D の箱 + グリッド / フリーカメラ / デバイス選択 / ギズモ操作          │
 │    HMD 映像ビューワー (左目 / 右目切替, FHD / WQHD)                      │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -75,7 +76,11 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
 | ライブラリ | バージョン | 用途 |
 |---|---|---|
 | [OpenVR SDK](https://github.com/ValveSoftware/openvr) | v2.5.1（`TUBANE_OPENVR_VERSION` で変更可） | `openvr_driver.h`（ヘッダのみ使用。`openvr_api.lib` はリンクしない） |
-| Dear ImGui / ImGuizmo | Step 2 で追加予定 | サンドボックス GUI |
+| [Dear ImGui](https://github.com/ocornut/imgui) | v1.92.9b-docking（`TUBANE_IMGUI_VERSION`） | サンドボックス GUI（docking ブランチ） |
+| [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | コミット `105e4fd`（`TUBANE_IMGUIZMO_COMMIT`） | 移動 / 回転ギズモ |
+
+ImGuizmo は上流でリリースタグが管理されていないため、コミットハッシュで固定しています。
+サンドボックスが不要な場合は `-DTUBANE_BUILD_SANDBOX=OFF` で ImGui / ImGuizmo の取得とビルドを省略できます。
 
 ---
 
@@ -114,7 +119,17 @@ tubane/
 ├─ docs/
 │   ├─ architecture.md         設計方針・技術選定の詳細
 │   └─ ipc.md                  共有メモリプロトコル仕様
-└─ sandbox/                    （Step 2 で追加）
+└─ sandbox/                    tubane_sandbox.exe（3D GUI）
+    ├─ CMakeLists.txt
+    └─ src/
+        ├─ main.cpp            Win32 ウィンドウ、D3D11、ImGui のメインループ、フォント / DPI 設定
+        ├─ app.*               パネル UI、ビューポート、ギズモ、ピッキング、入力の合成
+        ├─ renderer.*          オフスクリーン 4x MSAA 描画（線・ボックス）、HLSL は実行時にコンパイル
+        ├─ camera.*            フリーカメラ（視点回転 / 飛行 / パン / 注視点回転）
+        ├─ scene.*             デバイスの名前・色・簡易モデル・ピック範囲
+        ├─ ipc_link.*          共有メモリへの書き込み（control）とドライバ状態の監視
+        ├─ d3d11_context.*     D3D11 デバイスとフリップモデルのスワップチェーン
+        └─ math_util.h         IPC ↔ DirectXMath 変換、オイラー角、レイとボックスの交差判定
 ```
 
 ---
@@ -144,7 +159,12 @@ Visual Studio の IDE で「フォルダーを開く」から `tubane` を開い
 |---|---|
 | `build/vs2026/package/tubane/` | **SteamVR に登録するドライバフォルダ一式** |
 | `build/vs2026/package/tubane/bin/win64/driver_tubane.dll` | ドライバ本体 |
+| `build/vs2026/sandbox/<Config>/tubane_sandbox.exe` | 3D サンドボックス GUI |
 | `build/vs2026/tools/shm_probe/<Config>/tubane_shm_probe.exe` | 共有メモリ検証ツール |
+
+> SteamVR の起動中は `driver_tubane.dll` がロックされるため、全ターゲットをビルドすると DLL のリンクで失敗します。
+> SteamVR を起動したままサンドボックスだけをビルドする場合は
+> `cmake --build --preset vs2026-release --target tubane_sandbox` を使ってください。
 
 > **注意:** `driver_tubane.dll` は Debug / Release に関わらず同じ場所に出力されます（登録パスを固定するため）。
 > 最後にビルドした構成の DLL が使われます。また、SteamVR 実行中は DLL がロックされるため、
@@ -192,7 +212,7 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 
 ---
 
-## 動作確認（Step 1）
+## 動作確認
 
 1. ビルドして `register_driver.ps1` で登録する
 2. SteamVR を起動する
@@ -210,14 +230,85 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
    ...
    ```
 
-5. 別のターミナルで `tubane_shm_probe status` を実行し、driver block の `pid` と `heartbeat` が 0 でないこと、各デバイスに `vrId` が割り当てられていることを確認する
-6. `tubane_shm_probe orbit` を実行すると、HMD が左右に首を振り、右手コントローラーが円を描きます。SteamVR のミラー表示やコンポジタウィンドウで動きを確認できます
+5. `tubane_sandbox.exe` を起動し、メニューバー右端に **SteamVR driver connected** と表示されることを確認する
+6. ビューポートでデバイスをクリックし、ギズモでドラッグすると SteamVR 側のデバイスも同じように動く
+   （SteamVR の「Headset Window」やミラー表示、または `vrcmd --pollposes` で確認できます）
+7. サンドボックスを使わずに確認したい場合は、`tubane_shm_probe status` で driver block の `pid` と `heartbeat` が 0 でないこと、
+   各デバイスに `vrId` が割り当てられていることを確認する。`tubane_shm_probe orbit` で HMD の首振りと右手の円運動を再生できます
+
+---
+
+## tubane-sandbox の使い方
+
+`build/vs2026/sandbox/Release/tubane_sandbox.exe` を起動します。SteamVR より先に起動しても後に起動しても構いません
+（先に動かしたデバイスの位置は、ドライバが接続した時点で反映されます）。
+
+### 画面構成
+
+```
+┌ Scene  View  Help ─────────────────────────────────────── SteamVR driver connected ┐
+├──────────────┬──────────────────────────────────────────┬──────────────────────────┤
+│ Devices      │ Viewport                                 │ Controller Input         │
+│  HMD      #0 │  [Move][Rotate][Both] [World][Local] Snap│  Left hand | Right hand  │
+│  Index L  #1 │                                          │  ボタン / トリガー /     │
+│  Index R  #2 │        ┌──────────── 箱 ────────────┐     │  スティック / 指カール   │
+│  Tracker… #3 │        │   HMD ◇←ギズモ             │     │                          │
+├──────────────┤        │  L ▭  ▭ R                  │     ├──────────────────────────┤
+│ Inspector    │        │      ▬ Waist               │     │ Driver / Settings |      │
+│  Position    │        │   ▬     ▬ Feet             │     │ HMD Viewer               │
+│  Rotation    │        └────────────────────────────┘     │  接続状態 / 解像度 /     │
+│  Quaternion  │                                          │  トラッカー数 / 表示する目│
+└──────────────┴──────────────────────────────────────────┴──────────────────────────┘
+```
+
+| パネル | 内容 |
+|---|---|
+| **Viewport** | ルームスケールの箱（既定 4m × 4m × 高さ 2.5m、0.5m グリッド）と各デバイスを表示。原点に XYZ 軸、床に前方（-Z）を示す矢印。HMD からは視錐台（水平 90°）が伸びています |
+| **Devices** | デバイス一覧。クリックで選択、ダブルクリックでカメラをそのデバイスに寄せる。右端の `#n` は SteamVR 上のデバイス番号 |
+| **Inspector** | 選択中デバイスの位置（m）・回転（Pitch / Yaw / Roll、度）を数値で編集。クォータニオン (w, x, y, z) も表示。`Connected` / `Tracking valid` を外すと、切断状態やトラッキングロストを再現できます |
+| **Controller Input** | 左右の Index コントローラーの入力。`press` は押している間だけ ON、`Click` / `Touch` のチェックは押しっぱなし。トリガー・グリップ・トラックパッド圧は スライダー、スティック・トラックパッドは円形パッドをドラッグ（`Spring` が ON なら離すと中央に戻る） |
+| **Driver / Settings** | ドライバの接続状態、レンダー解像度、トラッカー数、GPU。解像度（FHD / WQHD）とトラッカー数（0〜8）の変更は `steamvr.vrsettings` に保存され、SteamVR の再起動後に反映されます |
+| **HMD Viewer** | Step 3 で HMD の映像を表示する予定のパネル（現在は設定の表示のみ） |
+
+### 操作方法
+
+| 操作 | 内容 |
+|---|---|
+| 左クリック | デバイスを選択（何もない場所をクリックすると選択解除） |
+| ギズモをドラッグ | 移動 / 回転。結果は即座に SteamVR に反映される |
+| `W` / `E` / `R` | ギズモを 移動 / 回転 / 移動＋回転 に切り替え |
+| `X` | ワールド座標 / ローカル座標 の切り替え |
+| `Ctrl` を押しながらドラッグ | スナップ（既定 0.05m / 15°。ツールバーの `Snap` で常時 ON にした場合は、逆に一時 OFF） |
+| 右ドラッグ | 視点の回転 |
+| 右ドラッグ中に `W` `A` `S` `D` / `Q` `E` | 飛行移動 / 下降・上昇（`Shift` で高速、ホイールで速度変更） |
+| 中ドラッグ | パン |
+| ホイール | 前後移動 |
+| `Alt` + 左ドラッグ | 注視点を中心に回転 |
+| `F` | 選択中のデバイスにカメラを寄せる |
+| `Space`（コントローラー選択中） | 押している間トリガーを全押し |
+| `Esc` | 選択解除 |
+
+メニュー:
+
+- **Scene** → `Reset all poses`（全デバイスを初期配置へ）、`Release all inputs`（入力をすべて解除）
+- **View** → カメラのリセット、ラベル / HMD 視錐台の表示切替、部屋のサイズ（幅・奥行き・高さ）
+- **Help** → 操作一覧
+
+ウィンドウのレイアウトは exe と同じフォルダの `tubane_sandbox.ini` に保存されます。削除すると初期レイアウトに戻ります。
+
+### 注意事項
+
+- 姿勢と入力の書き込みは **サンドボックス 1 つだけ** が行う設計です。サンドボックスを 2 つ起動したり、
+  サンドボックスの起動中に `tubane_shm_probe` の書き込み系コマンドを使ったりしないでください（起動時に他のインスタンスを検出すると警告を表示します）
+- 速度・角速度は現在 0 を送っています（SteamVR の姿勢予測は無効の状態）。ギズモでの操作には 500Hz で追従します
+- 骨格入力（Skeletal Input）は未実装です。指カールの値は `/input/finger/*` に送られます
 
 ---
 
 ## tubane_shm_probe の使い方
 
-サンドボックス GUI が完成するまでの検証用ツールです。共有メモリの内容を表示したり、姿勢を直接書き込んだりできます。
+GUI を使わずに共有メモリの内容を表示したり、姿勢を直接書き込んだりする検証用ツールです。
+`status` ではコントローラー入力（ボタンのビットマスク・トリガー・グリップ・スティック・指カール）も表示します。
 
 ```
 tubane_shm_probe status                      driver / control ブロックを 1 回表示
@@ -319,6 +410,9 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
 | `MapFailed (win32 error 5)` | SteamVR を管理者権限で起動していると、権限の異なるプロセスから共有メモリにアクセスできない。SteamVR とツールを同じ権限で実行する |
 | 再ビルド時に DLL を上書きできない | SteamVR (vrserver.exe) が DLL をロックしている。SteamVR を終了してから再ビルドする |
 | 解像度 / トラッカー数の変更が反映されない | SteamVR を再起動する（実行中の変更は仕様上反映できない） |
+| サンドボックスで「SteamVR driver not running」のまま | SteamVR が起動していない、またはドライバがロードされていない。ドライバのハートビートが 1 秒以上止まるとこの表示になる |
+| サンドボックスで動かしても SteamVR 側が動かない | サンドボックスが 2 つ起動している、または `tubane_shm_probe` の書き込み系コマンドが動いている。Driver / Settings パネルの警告を確認する |
+| サンドボックスのレイアウトが崩れた | exe と同じフォルダの `tubane_sandbox.ini` を削除して再起動する |
 
 ---
 
@@ -331,19 +425,21 @@ tubane 全体（共有メモリ・サンドボックス・ドライバ）で **O
   - [x] 共有メモリからの姿勢反映（約 500Hz）とボタン / 軸入力
   - [x] 解像度 / トラッカー数の永続設定（`steamvr.vrsettings`）
   - [x] 検証ツール `tubane_shm_probe`、登録スクリプト
-- [ ] **Step 2** — `tubane-sandbox`
-  - [ ] D3D11 + Dear ImGui (docking) + ImGuizmo のアプリケーション骨格
-  - [ ] ルームスケールの箱 / グリッド描画、フリーカメラ
-  - [ ] デバイスの簡易モデル（軸表示）描画、クリックによる選択（レイキャスト）
-  - [ ] ImGuizmo による移動 / 回転、数値入力パネル
-  - [ ] 共有メモリへの姿勢書き込み、ドライバ状態表示
-  - [ ] コントローラー入力パネル（ボタン、トリガー、スティック、指カール）
+- [x] **Step 2** — `tubane-sandbox`
+  - [x] D3D11 + Dear ImGui (docking) + ImGuizmo のアプリケーション骨格
+  - [x] ルームスケールの箱 / グリッド描画、フリーカメラ
+  - [x] デバイスの簡易モデル（軸表示）描画、クリックによる選択（レイキャスト）
+  - [x] ImGuizmo による移動 / 回転、数値入力パネル
+  - [x] 共有メモリへの姿勢書き込み、ドライバ状態表示
+  - [x] コントローラー入力パネル（ボタン、トリガー、スティック、指カール）
+  - [x] 解像度 / トラッカー数 / 表示する目 の設定 UI
 - [ ] **Step 3** — 映像出力とリアルタイム同期の仕上げ
   - [ ] `IVRDriverDirectModeComponent` の実装（スワップテクスチャセット）
   - [ ] 選択した目を D3D11 共有テクスチャ（名前付き NT ハンドル + Keyed Mutex）へコピー
   - [ ] サンドボックス側ビューワー（左目 / 右目の切替、FHD / WQHD）
   - [ ] GPU アダプタ LUID の照合
   - [ ] 骨格入力（Skeletal Input）
+  - [ ] 速度・角速度の算出（SteamVR の姿勢予測を有効化）
 
 ---
 

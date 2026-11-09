@@ -21,6 +21,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(TUBANE_BUILD_DRIVER  "Build the SteamVR driver (driver_tubane.dll)" ON)
+option(TUBANE_BUILD_SANDBOX "Build the 3D sandbox GUI (tubane_sandbox.exe)" ON)
 option(TUBANE_BUILD_TOOLS   "Build developer tools (shm_probe)"           ON)
 
 include(cmake/Dependencies.cmake)
@@ -29,6 +30,10 @@ add_subdirectory(common)
 
 if(TUBANE_BUILD_DRIVER)
     add_subdirectory(driver)
+endif()
+
+if(TUBANE_BUILD_SANDBOX)
+    add_subdirectory(sandbox)
 endif()
 
 if(TUBANE_BUILD_TOOLS)
