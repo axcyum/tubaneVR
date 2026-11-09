@@ -255,6 +255,7 @@ void App::DrawMenuBar() {
         ImGui::Separator();
         ImGui::MenuItem("Device labels", nullptr, &showLabels_);
         ImGui::MenuItem("HMD frustum", nullptr, &showFrustum_);
+        ImGui::MenuItem("Body links (IK)", nullptr, &showBodyLinks_);
         ImGui::Separator();
         ImGui::TextDisabled("Room size (m)");
         ImGui::SetNextItemWidth(160.0f);
@@ -520,6 +521,7 @@ void App::RenderScene(FXMMATRIX view, CXMMATRIX proj) {
     DrawRoom();
     const uint32_t count = ipc::kSlotFirstTracker + VisibleTrackerCount();
     for (uint32_t slot = 0; slot < count; ++slot) DrawDevice(slot);
+    if (showBodyLinks_) DrawBodyLinks();
     if (showFrustum_) DrawHmdFrustum();
     renderer_.End();
 }
@@ -590,6 +592,31 @@ void App::DrawDevice(uint32_t slot) {
     // Drop line to the floor for depth perception.
     const XMFLOAT3 p = PositionOf(pose);
     renderer_.Line(p, {p.x, 0.0f, p.z}, {0.5f, 0.5f, 0.55f, 0.35f * alpha});
+}
+
+// White leg links between the body trackers, like the VRIK (Final IK) gizmo:
+// waist -> foot, or waist -> knee -> foot when the knee (thigh) tracker exists.
+// Tracker index order follows DescribeSlot: 0 waist, 1/2 feet, 6/7 knees.
+void App::DrawBodyLinks() {
+    constexpr uint32_t kWaist = 0, kFootL = 1, kFootR = 2, kKneeL = 6, kKneeR = 7;
+    auto has = [&](uint32_t index) { return SlotVisible(ipc::kSlotFirstTracker + index); };
+    auto pos = [&](uint32_t index) { return PositionOf(ipc_.Control().poses[ipc::kSlotFirstTracker + index]); };
+    if (!has(kWaist)) return;
+
+    const Color    white{0.95f, 0.95f, 0.95f, 0.9f};
+    const XMFLOAT3 waist = pos(kWaist);
+    const uint32_t legs[2][2] = {{kFootL, kKneeL}, {kFootR, kKneeR}};
+    for (const auto& leg : legs) {
+        const bool foot = has(leg[0]);
+        const bool knee = has(leg[1]);
+        if (knee) {
+            const XMFLOAT3 k = pos(leg[1]);
+            renderer_.Line(waist, k, white);
+            if (foot) renderer_.Line(k, pos(leg[0]), white);
+        } else if (foot) {
+            renderer_.Line(waist, pos(leg[0]), white);
+        }
+    }
 }
 
 void App::DrawHmdFrustum() {

@@ -88,6 +88,7 @@ private:
     void DrawRoom();
     void DrawDevice(uint32_t slot);
     void DrawHmdFrustum();
+    void DrawBodyLinks();
     void DrawLabels(DirectX::FXMMATRIX viewProj, const ImVec2& origin, const ImVec2& size);
     int  PickDevice(const Ray& ray) const;
     void FocusSelected();
@@ -160,6 +161,7 @@ private:
 
     bool showLabels_  = true;
     bool showFrustum_ = true;
+    bool showBodyLinks_ = true;
     bool showHelp_    = false;
     bool showDemo_    = false;
     float roomWidth_  = 4.0f;
