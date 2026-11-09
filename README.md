@@ -31,28 +31,114 @@ SteamVR に仮想の HMD・Valve Index コントローラー（左右）・HTC V
 
 ## 構成概要
 
+### 全体構成
+
+```mermaid
+flowchart LR
+    subgraph SANDBOX["tubane_sandbox.exe（C++ / D3D11 / Dear ImGui / ImGuizmo）"]
+        direction TB
+        UI["3D ビューポート<br/>箱・グリッド・フリーカメラ<br/>選択・ギズモ操作"]
+        PANELS["パネル<br/>Inspector / Controller Input<br/>Driver / Settings"]
+        LINK["IpcLink<br/>ControlBlock の唯一の書き込み手"]
+        VIEWER["HMD Viewer<br/>左目 / 右目・FHD / WQHD<br/>ポップアウト"]
+        UI --> LINK
+        PANELS --> LINK
+    end
+
+    subgraph SHARED["プロセス間共有（同一 PC・同一 GPU）"]
+        direction TB
+        SHM[("共有メモリ<br/>Local\tubane_shared_state_v1<br/>SeqLock 付き固定長構造体")]
+        TEX[["D3D11 共有テクスチャ<br/>名前付き NT ハンドル + Keyed Mutex<br/>R8G8B8A8・FHD / WQHD"]]
+    end
+
+    subgraph VRSERVER["vrserver.exe（SteamVR）"]
+        direction TB
+        subgraph DRIVER["driver_tubane.dll（OpenVR Driver API）"]
+            direction TB
+            PROVIDER["ServerProvider<br/>RunFrame・設定反映"]
+            POSE["pose thread<br/>約 500Hz"]
+            HMD["HmdDevice<br/>仮想 HMD"]
+            DM["DirectModeRenderer<br/>スワップテクスチャ・Present"]
+            CTRL["ControllerDevice ×2<br/>Valve Index（knuckles）"]
+            TRK["TrackerDevice ×N<br/>HTC Vive Tracker"]
+            HMD --- DM
+        end
+    end
+
+    COMP["vrcompositor.exe<br/>SteamVR コンポジタ"]
+    APPS["VR アプリ<br/>VRChat など"]
+    SETTINGS[("steamvr.vrsettings<br/>解像度・トラッカー数")]
+
+    LINK -- "姿勢・入力・設定<br/>毎フレーム書き込み" --> SHM
+    SHM -- "姿勢" --> POSE
+    SHM -- "ボタン・軸・設定" --> PROVIDER
+    PROVIDER -- "状態・デバイス番号" --> SHM
+    SHM -- "接続状態・テクスチャ名・frameIndex" --> LINK
+
+    POSE -- "TrackedDevicePoseUpdated" --> HMD
+    POSE --> CTRL
+    POSE --> TRK
+    PROVIDER -- "Update*Component" --> CTRL
+    PROVIDER -- "永続化" --> SETTINGS
+
+    APPS -- "Submit" --> COMP
+    COMP -- "SubmitLayer / Present" --> DM
+    DM -- "選択した目をシェーダーでコピー" --> TEX
+    TEX -- "CopyResource" --> VIEWER
 ```
-┌──────────────────────── vrserver.exe (SteamVR) ────────────────────────┐
-│  driver_tubane.dll  (tubane-driver)                                     │
-│    ├─ HmdDevice          仮想 HMD  (IVRDisplayComponent → Step3: DirectMode)
-│    ├─ ControllerDevice×2 Valve Index コントローラー (knuckles)          │
-│    ├─ TrackerDevice×N    HTC Vive Tracker (腰・左足・右足 …)            │
-│    └─ pose thread (~500Hz) ── 共有メモリから姿勢を読み SteamVR へ通知   │
-└──────────────────────────────▲──────────────────────────────────────────┘
-                               │  共有メモリ  Local\tubane_shared_state_v1
-                               │  (SeqLock で保護された固定長構造体)
-                               │  + Step3: D3D11 共有テクスチャ (NT ハンドル)
-┌──────────────────────────────┴──────────────────────────────────────────┐
-│  tubane-sandbox           C++ / D3D11 / Dear ImGui / ImGuizmo           │
-│    3D の箱 + グリッド / フリーカメラ / デバイス選択 / ギズモ操作          │
-│    HMD 映像ビューワー (左目 / 右目切替, FHD / WQHD)                      │
-└─────────────────────────────────────────────────────────────────────────┘
+
+### 姿勢と入力の流れ
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as ユーザー
+    participant SB as tubane-sandbox
+    participant SHM as 共有メモリ
+    participant PT as pose thread（約 500Hz）
+    participant RF as RunFrame（フレーム毎）
+    participant VR as vrserver / アプリ
+
+    User->>SB: ギズモでデバイスをドラッグ / ボタンを押す
+    SB->>SHM: ControlBlock を書き込み（SeqLock・ハートビート +1）
+    loop 2ms 毎
+        PT->>SHM: ControlBlock を読む（ロック無し）
+        PT->>VR: TrackedDevicePoseUpdated（全デバイス）
+        PT->>SHM: DriverBlock のハートビート +1
+    end
+    loop SteamVR のフレーム毎
+        RF->>SHM: ControlBlock を読む
+        RF->>VR: UpdateBooleanComponent / UpdateScalarComponent（変化分のみ）
+    end
+    SHM-->>SB: DriverBlock（接続状態・デバイス番号）
+```
+
+### HMD 映像の流れ
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant APP as VR アプリ
+    participant COMP as vrcompositor
+    participant DM as DirectModeRenderer
+    participant TEX as 共有テクスチャ
+    participant SB as tubane-sandbox
+
+    DM->>COMP: VsyncEvent（displayFrequency 毎）
+    APP->>COMP: 左右の目を Submit
+    COMP->>DM: SubmitLayer（左目・右目のスワップテクスチャ）
+    COMP->>DM: Present（sync テクスチャ）
+    DM->>DM: viewerEye を共有メモリから読む
+    DM->>TEX: AcquireSync(0, 0) → 選択した目を拡大縮小コピー → ReleaseSync
+    DM->>SB: frameIndex +1（共有メモリ経由）
+    SB->>TEX: AcquireSync(0, 0) → CopyResource → ReleaseSync
+    SB->>SB: HMD Viewer に表示
 ```
 
 | コンポーネント | 言語 / 技術 | 役割 |
 |---|---|---|
 | `tubane-driver` (`driver_tubane.dll`) | C++20, OpenVR Driver API | SteamVR にロードされ、仮想デバイスをスポーンする |
-| `tubane-sandbox` | C++20, D3D11, Dear ImGui, ImGuizmo | 3D 空間上でデバイスを操作し、HMD 映像を表示する（Step 2 / 3） |
+| `tubane-sandbox` | C++20, D3D11, Dear ImGui, ImGuizmo | 3D 空間上でデバイスを操作し、HMD 映像を表示する |
 | `common` | ヘッダオンリー C++ | 共有メモリ構造体・SeqLock・初期配置を driver / sandbox で共有 |
 | `tubane_shm_probe` | C++ コンソールツール | GUI 無しで共有メモリを読み書きする検証用ツール |
 
