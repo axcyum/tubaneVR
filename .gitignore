@@ -1,0 +1,75 @@
+# ---- Build output ----------------------------------------------------------
+/build/
+/out/
+/install/
+[Bb]in/
+!driver/package/**/bin/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Rr]el[Ww]ith[Dd]eb[Ii]nfo/
+[Mm]in[Ss]ize[Rr]el/
+x64/
+x86/
+
+# ---- CMake -----------------------------------------------------------------
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+CMakeUserPresets.json
+
+# ---- Visual Studio / MSVC --------------------------------------------------
+.vs/
+*.sln
+*.slnx
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.ipch
+ipch/
+*.aps
+*.ncb
+*.tlog
+*.lastbuildstate
+*.idb
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.lib
+*.obj
+*.o
+*.pch
+*.dll
+*.exe
+*.log
+enc_temp_folder/
+
+# ---- Other editors ---------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+cmake-build-*/
+*.swp
+*~
+
+# ---- OS --------------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- tubane runtime artefacts ----------------------------------------------
+*.tubane-backup-*
+imgui.ini

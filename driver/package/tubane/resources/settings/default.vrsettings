@@ -1,0 +1,13 @@
+{
+	"driver_tubane": {
+		"enable": true,
+		"resolutionPreset": "FHD",
+		"trackerCount": 3,
+		"displayFrequency": 90.0,
+		"ipd": 0.063,
+		"windowX": 0,
+		"windowY": 0,
+		"windowWidth": 1920,
+		"windowHeight": 540
+	}
+}

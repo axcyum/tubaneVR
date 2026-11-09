@@ -1,0 +1,7 @@
+{
+	"alwaysActivate": true,
+	"name": "tubane",
+	"directory": "",
+	"resourceOnly": false,
+	"hmd_presence": [ "*.*" ]
+}
