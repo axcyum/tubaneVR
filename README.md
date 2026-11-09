@@ -123,51 +123,14 @@ ImGuizmo は上流でリリースタグが管理されていないため、コ�
 
 ## ディレクトリ構成
 
-```
-tubane/
-├─ CMakeLists.txt              ルート。オプション: TUBANE_BUILD_DRIVER / TUBANE_BUILD_TOOLS
-├─ CMakePresets.json           vs2026 / vs2022 / ninja プリセット
-├─ cmake/
-│   └─ Dependencies.cmake      FetchContent による依存取得 (OpenVR SDK)
-├─ common/                     driver / sandbox 共通（ヘッダオンリー）
-│   └─ include/tubane/
-│       ├─ ipc_layout.h        共有メモリの構造体定義（プロトコルの唯一の定義元）
-│       ├─ shm.h               CreateFileMapping ラッパー + SeqLock 読み書き
-│       └─ default_state.h     各デバイスの初期配置（"ポン置き" 座標）
-├─ driver/
-│   ├─ CMakeLists.txt
-│   ├─ src/
-│   │   ├─ driver_main.cpp     HmdDriverFactory（DLL エクスポート）
-│   │   ├─ server_provider.*   IServerTrackedDeviceProvider。デバイス生成・IPC・pose thread
-│   │   ├─ device_base.*       全デバイス共通基底（姿勢変換・共通プロパティ）
-│   │   ├─ hmd_device.*        仮想 HMD（IVRDisplayComponent）
-│   │   ├─ controller_device.* Index コントローラー（入力コンポーネント）
-│   │   ├─ tracker_device.*    Vive Tracker（ロール自動割り当て）
-│   │   ├─ settings.*          driver_tubane 設定セクションの読み書き
-│   │   └─ driver_log.h        vrserver.txt へのログ出力
-│   └─ package/tubane/         SteamVR ドライバフォルダの雛形（ビルド時にコピーされる）
-│       ├─ driver.vrdrivermanifest
-│       └─ resources/settings/default.vrsettings
-├─ tools/
-│   ├─ shm_probe/              tubane_shm_probe（共有メモリ検証ツール）
-│   ├─ register_driver.ps1     SteamVR へドライバ登録 (vrpathreg adddriver)
-│   ├─ unregister_driver.ps1   登録解除
-│   └─ steamvr_common.ps1      上記スクリプトの共通関数
-├─ docs/
-│   ├─ architecture.md         設計方針・技術選定の詳細
-│   └─ ipc.md                  共有メモリプロトコル仕様
-└─ sandbox/                    tubane_sandbox.exe（3D GUI）
-    ├─ CMakeLists.txt
-    └─ src/
-        ├─ main.cpp            Win32 ウィンドウ、D3D11、ImGui のメインループ、フォント / DPI 設定
-        ├─ app.*               パネル UI、ビューポート、ギズモ、ピッキング、入力の合成
-        ├─ renderer.*          オフスクリーン 4x MSAA 描画（線・ボックス）、HLSL は実行時にコンパイル
-        ├─ camera.*            フリーカメラ（視点回転 / 飛行 / パン / 注視点回転）
-        ├─ scene.*             デバイスの名前・色・簡易モデル・ピック範囲
-        ├─ ipc_link.*          共有メモリへの書き込み（control）とドライバ状態の監視
-        ├─ d3d11_context.*     D3D11 デバイスとフリップモデルのスワップチェーン
-        └─ math_util.h         IPC ↔ DirectXMath 変換、オイラー角、レイとボックスの交差判定
-```
+| パス | 内容 |
+|---|---|
+| `driver/` | SteamVR ドライバ（`driver_tubane.dll`）と、SteamVR に登録するフォルダの雛形 |
+| `sandbox/` | 3D サンドボックス GUI（`tubane_sandbox.exe`） |
+| `common/` | driver と sandbox が共有するヘッダ（共有メモリの構造体など） |
+| `tools/` | 検証ツール `tubane_shm_probe`、ドライバの登録 / 解除スクリプト |
+| `docs/` | 設計資料（[architecture.md](docs/architecture.md)、[ipc.md](docs/ipc.md)） |
+| `cmake/` | 依存ライブラリの自動取得設定 |
 
 ---
 
@@ -283,85 +246,61 @@ powershell -ExecutionPolicy Bypass -File tools\unregister_driver.ps1 -RemoveForc
 
 ### 画面構成
 
-```
-┌ Scene  View  Help ─────────────────────────────────────── SteamVR driver connected ┐
-├──────────────┬──────────────────────────────────────────┬──────────────────────────┤
-│ Devices      │ Viewport                                 │ Controller Input         │
-│  HMD      #0 │  [Move][Rotate][Both] [World][Local] Snap│  Left hand | Right hand  │
-│  Index L  #1 │                                          │  ボタン / トリガー /     │
-│  Index R  #2 │        ┌──────────── 箱 ────────────┐     │  スティック / 指カール   │
-│  Tracker… #3 │        │   HMD ◇←ギズモ             │     │                          │
-├──────────────┤        │  L ▭  ▭ R                  │     ├──────────────────────────┤
-│ Inspector    │        │      ▬ Waist               │     │ Driver / Settings |      │
-│  Position    │        │   ▬     ▬ Feet             │     │ HMD Viewer               │
-│  Rotation    │        └────────────────────────────┘     │  接続状態 / 解像度 /     │
-│  Quaternion  │                                          │  トラッカー数 / 表示する目│
-└──────────────┴──────────────────────────────────────────┴──────────────────────────┘
-```
+<!-- TODO: ここにスクリーンショットを貼る（例: docs/images/sandbox.png） -->
+
+中央に 3D ビューポート、左にデバイス一覧、右に入力と設定のパネルが並びます。
+各パネルはドラッグで自由に配置でき、メインウィンドウの外に出すと独立したウィンドウになります。
 
 | パネル | 内容 |
 |---|---|
-| **Viewport** | ルームスケールの箱（既定 4m × 4m × 高さ 2.5m、0.5m グリッド）と各デバイスを表示。原点に XYZ 軸、床に前方（-Z）を示す矢印。HMD からは視錐台（水平 90°）が伸びています |
-| **Devices** | デバイス一覧。クリックで選択、ダブルクリックでカメラをそのデバイスに寄せる。右端の `#n` は SteamVR 上のデバイス番号 |
-| **Inspector** | 選択中デバイスの位置（m）・回転（Pitch / Yaw / Roll、度）を数値で編集。クォータニオン (w, x, y, z) も表示。`Connected` / `Tracking valid` を外すと、切断状態やトラッキングロストを再現できます |
-| **Controller Input** | 左右の Index コントローラーの入力。`press` は押している間だけ ON、`Click` / `Touch` のチェックは押しっぱなし。トリガー・グリップ・トラックパッド圧は スライダー、スティック・トラックパッドは円形パッドをドラッグ（`Spring` が ON なら離すと中央に戻る） |
-| **Driver / Settings** | ドライバの接続状態、レンダー解像度、トラッカー数、GPU。解像度（FHD / WQHD）とトラッカー数（0〜8）の変更は `steamvr.vrsettings` に保存され、SteamVR の再起動後に反映されます |
-| **HMD Viewer** | 仮想 HMD に描画された映像をリアルタイムに表示。`Left` / `Right` で表示する目を即時に切り替え、解像度（FHD / WQHD）を選択。`1:1 pixels` で等倍表示、`Pop out` で独立したウィンドウとして等倍サイズで開く（詳しくは [HMD 映像ビューワー](#hmd-映像ビューワー)） |
+| **Viewport** | ルームスケールの箱とデバイスを 3D 表示。クリックで選択し、ギズモで移動・回転 |
+| **Devices** | デバイス一覧。ダブルクリックでカメラを寄せる。`#n` は SteamVR 上のデバイス番号 |
+| **Inspector** | 位置・回転を数値で編集。`Connected` / `Tracking valid` で切断やトラッキングロストを再現 |
+| **Controller Input** | Index コントローラーのボタン・トリガー・グリップ・スティック・指カール |
+| **Driver / Settings** | 接続状態、解像度（FHD / WQHD）、トラッカー数（0〜8）、使用 GPU |
+| **HMD Viewer** | 仮想 HMD の映像。左目 / 右目の切替、等倍表示、別ウィンドウ化 |
+
+レイアウトは exe と同じフォルダの `tubane_sandbox.ini` に保存されます。削除すると初期状態に戻ります。
 
 ### 操作方法
 
+**デバイスの選択と移動**
+
 | 操作 | 内容 |
 |---|---|
-| 左クリック | デバイスを選択（何もない場所をクリックすると選択解除） |
-| ギズモをドラッグ | 移動 / 回転。結果は即座に SteamVR に反映される |
-| `W` / `E` / `R` | ギズモを 移動 / 回転 / 移動＋回転 に切り替え |
-| `X` | ワールド座標 / ローカル座標 の切り替え |
-| `Ctrl` を押しながらドラッグ | スナップ（既定 0.05m / 15°。ツールバーの `Snap` で常時 ON にした場合は、逆に一時 OFF） |
-| 右ドラッグ | 視点の回転 |
-| 右ドラッグ中に `W` `A` `S` `D` / `Q` `E` | 飛行移動 / 下降・上昇（`Shift` で高速、ホイールで速度変更） |
+| 左クリック | デバイスを選択（空白をクリックで解除、`Esc` でも解除） |
+| `W` / `E` / `R` | ギズモを 移動 / 回転 / 両方 に切り替え |
+| `X` | ワールド座標 / ローカル座標 を切り替え |
+| `Ctrl` + ドラッグ | スナップ（0.05m / 15°） |
+| `Space` | 選択中のコントローラーのトリガーを引く |
+
+**カメラ**
+
+| 操作 | 内容 |
+|---|---|
+| 右ドラッグ | 視点を回す |
+| 右ドラッグ中に `WASD` / `QE` | 飛行移動 / 上下（`Shift` で高速） |
 | 中ドラッグ | パン |
 | ホイール | 前後移動 |
-| `Alt` + 左ドラッグ | 注視点を中心に回転 |
-| `F` | 選択中のデバイスにカメラを寄せる |
-| `Space`（コントローラー選択中） | 押している間トリガーを全押し |
-| `Esc` | 選択解除 |
+| `Alt` + 左ドラッグ | 注視点を中心に回る |
+| `F` | 選択中のデバイスに寄る |
 
-メニュー:
-
-- **Scene** → `Reset all poses`（全デバイスを初期配置へ）、`Release all inputs`（入力をすべて解除）
-- **View** → カメラのリセット、ラベル / HMD 視錐台の表示切替、部屋のサイズ（幅・奥行き・高さ）
-- **Help** → 操作一覧
-
-ウィンドウのレイアウトは exe と同じフォルダの `tubane_sandbox.ini` に保存されます。削除すると初期レイアウトに戻ります。
-どのパネルもドラッグしてメインウィンドウの外に出すと、独立した OS のウィンドウになります（Dear ImGui の multi-viewport 機能）。
+メニューの **Scene → Reset all poses** で全デバイスを初期配置に戻せます。
 
 ### HMD 映像ビューワー
 
-```
-SteamVR コンポジタ ──▶ ドライバのスワップテクスチャ（左目 / 右目）
-                          │ Present 毎に、選択中の目をシェーダーで拡大縮小・色変換してコピー
-                          ▼
-              共有テクスチャ（FHD または WQHD、NT ハンドル + Keyed Mutex）
-                          │ 新しいフレームが来たら GPU 内でコピー（CPU を経由しない）
-                          ▼
-              tubane-sandbox の HMD Viewer パネル / ポップアウトウィンドウ
-```
+SteamVR が仮想 HMD に描画した映像を、GPU 上の共有テクスチャ経由でリアルタイムに表示します。
 
 | 操作 | 内容 |
 |---|---|
-| `Left` / `Right` | 表示する目を切り替える（即時反映） |
-| 解像度コンボ | `FHD 1920x1080` / `WQHD 2560x1440`。仮想 HMD のレンダーターゲットと共有テクスチャの解像度。**SteamVR の再起動で反映**（Driver / Settings パネルの設定と同じもの） |
-| `1:1 pixels` | 縮小せず等倍で表示（はみ出す場合はスクロール） |
-| `Pop out` | ビューワーを独立したウィンドウとして、レンダー解像度ちょうどの大きさで開く。閉じるときはそのウィンドウのタブをメインウィンドウにドラッグして戻す |
+| `Left` / `Right` | 表示する目を切り替え（即時） |
+| 解像度 | `FHD 1920x1080` / `WQHD 2560x1440`（SteamVR の再起動で反映） |
+| `1:1 pixels` | 縮小せず等倍で表示 |
+| `Pop out` | レンダー解像度ちょうどの別ウィンドウで開く |
 
-ステータス行には受信解像度・受信フレームレート・フレーム番号が表示されます。
-
-- 表示のフレームレートはモニターのリフレッシュレートが上限です（コンポジタは `displayFrequency`＝既定 90Hz で描画しています）
-- SteamVR の解像度スケール（設定 → ビデオ → 解像度）によってアプリの描画解像度は変わりますが、共有テクスチャは常に FHD / WQHD に拡大縮小されます
-- 表示されるのは各フレームの最初のレイヤー（アプリ、または SteamVR Home / ダッシュボード）です。
-  オーバーレイなどの追加レイヤーは合成されません
-- SteamVR とサンドボックスは **同じ GPU** で動いている必要があります。異なる場合はパネルに `GPU mismatch` と表示されます
-  （ドライバが使う GPU は設定 `adapterIndex` で変更できます）
+- 表示のフレームレートはモニターのリフレッシュレートが上限です（SteamVR 側は 90Hz で描画）
+- 表示されるのはアプリ（または SteamVR Home）の映像で、オーバーレイは合成されません
+- SteamVR とサンドボックスは同じ GPU で動かしてください。異なる場合は `GPU mismatch` と表示されます
 
 ### 注意事項
 
